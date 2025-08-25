@@ -102,7 +102,7 @@ class InsulinRecommendation(RecommendationBase):
                 'calculation_basis': f"Target: {target_glucose} mg/dL, IOB adjusted"
             },
             'safety_notes': [
-                "Consult healthcare provider before administering insulin",
+                "This is not professional advice - use your own judgment",
                 "Monitor glucose closely after insulin administration",
                 "Consider current IOB in decision making"
             ]
@@ -144,7 +144,7 @@ class InsulinRecommendation(RecommendationBase):
         if current_iob > 0.1:
             base_msg += f", IOB: {current_iob:.1f}u"
         
-        base_msg += ". Always consult your healthcare provider."
+        base_msg += ". This is not professional advice."
         
         return base_msg
 
