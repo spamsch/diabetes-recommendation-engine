@@ -179,20 +179,31 @@ class CommandProcessor:
             
             override_id = self.db.insert_iob_override(override)
             
-            # Trigger callback
+            # Trigger callback and get enhanced status if available
+            enhanced_status = None
             if 'iob_override_set' in self.callbacks:
-                self.callbacks['iob_override_set'](override)
+                enhanced_status = self.callbacks['iob_override_set'](override)
+            
+            # Prepare base data
+            base_data = {
+                'override_id': override_id,
+                'iob_value': iob_value,
+                'source': source,
+                'notes': notes,
+                'timestamp': override.timestamp
+            }
+            
+            # If we got enhanced status from callback, include it
+            if enhanced_status and enhanced_status.get('success'):
+                base_data['current_status'] = enhanced_status['data']
+                message = f"IOB set to {iob_value:.1f}u (from {source}). {enhanced_status['message']}"
+            else:
+                message = f"Set IOB to {iob_value:.1f} units (from {source})"
             
             return CommandResult(
                 success=True,
-                data={
-                    'override_id': override_id,
-                    'iob_value': iob_value,
-                    'source': source,
-                    'notes': notes,
-                    'timestamp': override.timestamp
-                },
-                message=f"Set IOB to {iob_value:.1f} units (from {source})"
+                data=base_data,
+                message=message
             )
             
         except ValueError as e:

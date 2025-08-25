@@ -375,6 +375,78 @@ class GlucoseMonitor:
     def _on_iob_override_set(self, entry):
         """Callback when IOB override is set"""
         logger.info(f"IOB override set via terminal: {entry.iob_value:.1f}u from {entry.source}")
+        
+        # Generate current status with updated recommendations
+        current_status = self._generate_current_status_with_recommendations()
+        
+        # Return the enhanced status for the command handlers to use
+        return current_status
+    
+    def _generate_current_status_with_recommendations(self):
+        """Generate current glucose status with updated recommendations after IOB change"""
+        try:
+            # Get most recent glucose reading
+            recent_readings = self.db.get_latest_readings(10)
+            if not recent_readings:
+                return {
+                    'success': False,
+                    'message': 'No recent glucose readings available',
+                    'data': {}
+                }
+            
+            current_reading = recent_readings[0]
+            current_time = current_reading.timestamp
+            
+            # Perform trend analysis
+            trend_analysis = self.trend_analyzer.analyze_trend(recent_readings)
+            
+            # Generate prediction
+            prediction = self.predictor.predict_glucose(recent_readings, 15)
+            
+            # Get IOB/COB data (this will now include the new IOB override)
+            active_insulin = self.db.get_active_insulin(current_time)
+            active_carbs = self.db.get_active_carbs(current_time)
+            
+            # Check for IOB override
+            iob_override_entry = self.db.get_latest_iob_override(current_time)
+            iob_override_value = iob_override_entry.iob_value if iob_override_entry else None
+            
+            iob_cob_data = None
+            if active_insulin or active_carbs or iob_override_value is not None:
+                iob_cob_data = self.iob_calculator.get_iob_cob_summary(
+                    current_time, active_insulin, active_carbs, current_reading.value, iob_override_value
+                )
+            
+            # Generate recommendations with new IOB context
+            recommendations = self.recommendation_engine.get_recommendations(
+                recent_readings, trend_analysis, prediction, iob_cob_data
+            )
+            
+            # Return comprehensive status
+            return {
+                'success': True,
+                'message': 'Current status with updated recommendations',
+                'data': {
+                    'glucose': {
+                        'value': current_reading.value,
+                        'trend': trend_analysis.get('trend', 'no_change'),
+                        'timestamp': current_reading.timestamp,
+                        'rate_of_change': trend_analysis.get('rate_of_change', 0)
+                    },
+                    'prediction': prediction,
+                    'iob_cob': iob_cob_data,
+                    'recommendations': recommendations,
+                    'iob_source': iob_override_entry.source if iob_override_entry else None
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating current status: {e}")
+            return {
+                'success': False,
+                'message': f'Error generating current status: {e}',
+                'data': {}
+            }
     
     def _get_next_reading_time(self):
         """Callback to get next reading time info"""

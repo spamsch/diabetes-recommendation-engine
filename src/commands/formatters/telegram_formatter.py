@@ -46,15 +46,75 @@ class TelegramFormatter:
             return f"Error: {result.error}"
         
         data = result.data
-        output = [f"Set IOB to {data['iob_value']:.1f} units (from {data['source']})"]
+        output = [f"✅ Set IOB to *{data['iob_value']:.1f} units* (from {data['source']})"]
         
         if data.get('notes'):
-            output.append(f"Notes: {data['notes']}")
+            output.append(f"📝 Notes: {data['notes']}")
         
-        output.extend([
-            "This will be used for next 30 minutes",
-            "This overrides calculated IOB from logged insulin"
-        ])
+        # Check if we have enhanced status with current glucose and recommendations
+        if 'current_status' in data:
+            status = data['current_status']
+            glucose_data = status.get('glucose', {})
+            iob_cob_data = status.get('iob_cob', {})
+            recommendations = status.get('recommendations', [])
+            
+            # Add current glucose status
+            output.extend([
+                "",
+                "📊 *Current Status:*"
+            ])
+            
+            if glucose_data:
+                trend_emoji = self._get_trend_arrow(glucose_data.get('trend', 'no_change'))
+                output.append(f"🩸 Glucose: *{glucose_data['value']:.0f} mg/dL* {trend_emoji}")
+                
+                trend_text = self._format_trend_text(glucose_data.get('trend', 'no_change'))
+                if trend_text != "Stable":
+                    rate = glucose_data.get('rate_of_change', 0)
+                    output.append(f"📈 Trend: {trend_text} ({rate:.1f} mg/dL/min)")
+            
+            # Add IOB/COB information
+            if iob_cob_data:
+                iob_total = iob_cob_data.get('iob', {}).get('total_iob', 0)
+                cob_total = iob_cob_data.get('cob', {}).get('total_cob', 0)
+                is_override = iob_cob_data.get('iob', {}).get('is_override', False)
+                
+                iob_text = f"💉 IOB: *{iob_total:.1f}u*"
+                if is_override:
+                    iob_text += f" (from {data['source']})"
+                output.append(iob_text)
+                
+                if cob_total > 0:
+                    output.append(f"🍎 COB: *{cob_total:.1f}g*")
+            
+            # Add recommendations
+            if recommendations:
+                output.extend(["", "💡 *Updated Recommendations:*"])
+                for i, rec in enumerate(recommendations, 1):
+                    rec_type = rec.get('type', 'unknown').upper()
+                    message = rec.get('message', 'No message')
+                    urgency = rec.get('urgency', 'normal')
+                    
+                    # Add urgency emojis
+                    urgency_emoji = ""
+                    if urgency == 'critical':
+                        urgency_emoji = "🚨 "
+                    elif urgency == 'high':
+                        urgency_emoji = "⚠️ "
+                    elif urgency == 'medium':
+                        urgency_emoji = "ℹ️ "
+                    
+                    output.append(f"{i}. {urgency_emoji}*[{rec_type}]* {message}")
+            else:
+                output.extend(["", "✅ No current recommendations."])
+        else:
+            # Fallback to simple message if no enhanced status
+            output.extend([
+                "",
+                "⏱ This will be used for next 30 minutes",
+                "🔄 This overrides calculated IOB from logged insulin"
+            ])
+        
         return "\n".join(output)
     
     def format_status_result(self, result: CommandResult) -> str:
