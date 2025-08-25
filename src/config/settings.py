@@ -93,6 +93,18 @@ class Settings:
         return os.getenv("TELEGRAM_CHAT_ID")
     
     @property
+    def telegram_status_interval_minutes(self) -> int:
+        return int(os.getenv("TELEGRAM_STATUS_INTERVAL_MINUTES", "30"))
+    
+    @property
+    def telegram_status_start_hour(self) -> int:
+        return int(os.getenv("TELEGRAM_STATUS_START_HOUR", "7"))
+    
+    @property
+    def telegram_status_end_hour(self) -> int:
+        return int(os.getenv("TELEGRAM_STATUS_END_HOUR", "22"))
+    
+    @property
     def database_path(self) -> str:
         return os.getenv("DATABASE_PATH", "glucose_monitor.db")
     

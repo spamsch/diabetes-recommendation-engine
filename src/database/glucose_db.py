@@ -314,7 +314,7 @@ class GlucoseDatabase:
             cursor.execute('''
                 SELECT id, timestamp, units, insulin_type, duration_minutes, notes
                 FROM insulin_entries
-                WHERE datetime(timestamp, '+' || duration_minutes || ' minutes') > ?
+                WHERE datetime(timestamp, '+' || duration_minutes || ' minutes') > datetime(?)
                 ORDER BY timestamp DESC
             ''', (current_time.isoformat(),))
             
@@ -384,7 +384,7 @@ class GlucoseDatabase:
             cursor.execute('''
                 SELECT id, timestamp, grams, carb_type, absorption_minutes, notes
                 FROM carb_entries
-                WHERE datetime(timestamp, '+' || absorption_minutes || ' minutes') > ?
+                WHERE datetime(timestamp, '+' || absorption_minutes || ' minutes') > datetime(?)
                 ORDER BY timestamp DESC
             ''', (current_time.isoformat(),))
             

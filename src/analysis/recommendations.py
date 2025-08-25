@@ -210,7 +210,7 @@ class InsulinRecommendation(RecommendationBase):
         trend = trend_analysis.get('trend', 'no_change')
         rate_of_change = trend_analysis.get('rate_of_change', 0)
         
-        base_msg = f"Consider {insulin_units:.1f} units of rapid-acting insulin. "
+        base_msg = f"Consider {insulin_units:.1f} units of insulin. "
         base_msg += f"Current glucose: {current_value:.0f} mg/dL"
         
         if trend == 'up' or trend == 'fast_up':
@@ -223,8 +223,6 @@ class InsulinRecommendation(RecommendationBase):
         
         if current_iob > 0.1:
             base_msg += f", IOB: {current_iob:.1f}u"
-        
-        base_msg += ". This is not professional advice."
         
         return base_msg
 

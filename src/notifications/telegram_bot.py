@@ -28,6 +28,9 @@ class TelegramNotifier:
         self.command_handlers = {}
         self.message_handler = None
         
+        # Status message tracking
+        self.last_message_time = None
+        
         # Extract bot token from URL for API calls
         if self.bot_url:
             # URL format: https://api.telegram.org/bot<TOKEN>/sendMessage
@@ -91,6 +94,44 @@ class TelegramNotifier:
             logger.error(f"Error sending Telegram alert: {e}")
             return False
     
+    def should_send_status_message(self) -> bool:
+        """Check if a periodic status message should be sent"""
+        if not self.enabled:
+            return False
+            
+        # Check if status messages are disabled (interval = 0)
+        if self.settings.telegram_status_interval_minutes == 0:
+            return False
+            
+        # Check time window first
+        if not self._is_within_status_hours():
+            return False
+            
+        # Check if enough time has passed since last message
+        if self.last_message_time is None:
+            return True
+            
+        time_since_last = (datetime.now() - self.last_message_time).total_seconds()
+        interval_seconds = self.settings.telegram_status_interval_minutes * 60
+        
+        return time_since_last >= interval_seconds
+    
+    def _is_within_status_hours(self) -> bool:
+        """Check if current time is within configured status message hours"""
+        now = datetime.now()
+        current_hour = now.hour
+        
+        start_hour = self.settings.telegram_status_start_hour
+        end_hour = self.settings.telegram_status_end_hour
+        
+        # Handle case where end_hour is before start_hour (crosses midnight)
+        if end_hour < start_hour:
+            # Status hours span midnight (e.g., 22:00 to 07:00)
+            return current_hour >= start_hour or current_hour <= end_hour
+        else:
+            # Normal case (e.g., 07:00 to 22:00)
+            return start_hour <= current_hour <= end_hour
+    
     def send_status_update(self, glucose_value: float, trend: str, 
                           prediction: Optional[Dict] = None) -> bool:
         """Send routine status update"""
@@ -140,19 +181,12 @@ class TelegramNotifier:
             if 'parameters' in rec:
                 params = rec['parameters']
                 if rec['type'] == 'insulin' and 'recommended_units' in params:
-                    message += f"• Suggested: {params['recommended_units']} units\n"
+                    message += f"\nSuggested: {params['recommended_units']} units\n"
                 elif rec['type'] == 'carbohydrate' and 'recommended_carbs' in params:
-                    message += f"• Suggested: {params['recommended_carbs']}g carbs\n"
+                    message += f"\nSuggested: {params['recommended_carbs']}g carbs\n"
                     if 'suggested_foods' in params:
                         foods = params['suggested_foods'][:2]  # Limit to 2 suggestions
                         message += f"• Options: {', '.join(foods)}\n"
-            
-            # Add safety notes for critical recommendations
-            if rec.get('urgency') == 'critical' or rec['priority'] <= 2:
-                if 'safety_notes' in rec:
-                    message += "*Safety reminders:*\n"
-                    for note in rec['safety_notes'][:2]:  # Limit to 2 notes
-                        message += f"• {note}\n"
             
             message += "\n"
         
@@ -192,7 +226,7 @@ class TelegramNotifier:
         timestamp = datetime.now().strftime("%H:%M")
         trend_emoji = self._get_trend_emoji(trend)
         
-        message = f"📊 *Glucose Update* - {timestamp}\n\n"
+        message = f"📊 *Status Update* - {timestamp}\n\n"
         message += f"Current: *{glucose_value} mg/dL* {trend_emoji}\n"
         message += f"Trend: {self._format_trend_text(trend)}\n"
         
@@ -203,6 +237,8 @@ class TelegramNotifier:
             
             message += f"Predicted ({pred_time}min): {pred_value} mg/dL\n"
             message += f"Confidence: {confidence.title()}\n"
+        
+        message += "\n_This is a routine status update - no action needed._"
         
         return message
     
@@ -225,6 +261,7 @@ class TelegramNotifier:
             )
             
             if response.status_code == 200:
+                self.last_message_time = datetime.now()
                 return True
             else:
                 logger.error(f"Telegram API error: {response.status_code} - {response.text}")
