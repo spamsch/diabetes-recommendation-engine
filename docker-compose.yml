@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  glucose-monitor:
+    build: .
+    container_name: glucose-monitor
+    restart: unless-stopped
+    
+    # Environment variables - OVERRIDE THESE WITH YOUR CREDENTIALS
+    environment:
+      # Dexcom credentials (REQUIRED for real monitoring)
+      - DEXCOM_USERNAME=${DEXCOM_USERNAME:-}
+      - DEXCOM_PASSWORD=${DEXCOM_PASSWORD:-}
+      - DEXCOM_OUS=${DEXCOM_OUS:-false}
+      
+      # Telegram configuration (OPTIONAL)
+      - TELEGRAM_BOT_URL=${TELEGRAM_BOT_URL:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      
+      # Monitoring settings
+      - POLL_INTERVAL_MINUTES=${POLL_INTERVAL_MINUTES:-5}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENABLE_TERMINAL_OUTPUT=${ENABLE_TERMINAL_OUTPUT:-false}
+      - ENABLE_GRAPHING=${ENABLE_GRAPHING:-true}
+      
+      # Glucose thresholds (mg/dL)
+      - LOW_GLUCOSE_THRESHOLD=${LOW_GLUCOSE_THRESHOLD:-70}
+      - HIGH_GLUCOSE_THRESHOLD=${HIGH_GLUCOSE_THRESHOLD:-180}
+      - CRITICAL_LOW_THRESHOLD=${CRITICAL_LOW_THRESHOLD:-55}
+      - CRITICAL_HIGH_THRESHOLD=${CRITICAL_HIGH_THRESHOLD:-300}
+      - TARGET_GLUCOSE=${TARGET_GLUCOSE:-120}
+      
+      # Analysis settings
+      - ANALYSIS_WINDOW_SIZE=${ANALYSIS_WINDOW_SIZE:-15}
+      - PREDICTION_MINUTES_AHEAD=${PREDICTION_MINUTES_AHEAD:-15}
+      
+      # Database and data retention
+      - DATABASE_PATH=/app/data/glucose_monitor.db
+      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
+      
+      # Recommendation settings
+      - ENABLE_INSULIN_RECOMMENDATIONS=${ENABLE_INSULIN_RECOMMENDATIONS:-true}
+      - ENABLE_CARB_RECOMMENDATIONS=${ENABLE_CARB_RECOMMENDATIONS:-true}
+      - INSULIN_EFFECTIVENESS=${INSULIN_EFFECTIVENESS:-40}
+      - CARB_EFFECTIVENESS=${CARB_EFFECTIVENESS:-15}
+      
+    # Mount volumes for persistent data
+    volumes:
+      - glucose_data:/app/data
+      - glucose_logs:/app/logs
+      # Optional: Mount your own .env file
+      # - ./.env:/app/.env:ro
+    
+    # Override command for production (remove --mock for real monitoring)
+    # command: ["python", "-m", "src.main", "--log-level", "INFO"]
+    
+    # For development/testing (default - uses mock data)
+    command: ["python", "-m", "src.main", "--mock", "--log-level", "INFO"]
+    
+    # Network configuration
+    networks:
+      - glucose-network
+    
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Web dashboard service (if you add a web interface later)
+  # glucose-dashboard:
+  #   build: 
+  #     context: .
+  #     dockerfile: Dockerfile.dashboard
+  #   container_name: glucose-dashboard
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     - glucose-monitor
+  #   volumes:
+  #     - glucose_data:/app/data:ro
+  #   networks:
+  #     - glucose-network
+
+volumes:
+  glucose_data:
+    driver: local
+  glucose_logs:
+    driver: local
+
+networks:
+  glucose-network:
+    driver: bridge
+
+# Example usage:
+#
+# 1. Development/Testing (mock data):
+#    docker-compose up
+#
+# 2. Production with real Dexcom credentials:
+#    Create .env file with your credentials, then:
+#    docker-compose --env-file .env up -d
+#
+# 3. With custom configuration:
+#    DEXCOM_USERNAME=myuser DEXCOM_PASSWORD=mypass docker-compose up
+#
+# 4. View logs:
+#    docker-compose logs -f glucose-monitor
+#
+# 5. Stop and cleanup:
+#    docker-compose down
+#
+# 6. Generate graphs:
+#    docker-compose exec glucose-monitor python graph_generator.py --type timeline
+#
+# 7. Interactive shell:
+#    docker-compose exec glucose-monitor bash

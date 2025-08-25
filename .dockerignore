@@ -1,0 +1,130 @@
+# Docker ignore file for glucose monitoring system
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.dexcom-analyze/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Sensitive data and configuration
+.env
+.env.*
+!.env.example
+
+# Database files (sensitive health data)
+*.db
+*.db-journal
+*.sqlite*
+glucose_monitor.db*
+
+# Log files
+*.log
+logs/
+glucose_monitor.log*
+
+# Credentials and secrets
+*config.json
+*credentials*
+*token*
+telegram_config.json
+dexcom_config.json
+
+# Test files and coverage
+.pytest_cache/
+.coverage
+.tox/
+htmlcov/
+*.cover
+.hypothesis/
+
+# Development and debugging
+debug_*
+temp_*
+tmp_*
+test_*
+*_test.py
+
+# Documentation build
+docs/_build/
+_build/
+
+# Distribution files
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Data exports and graphs
+*.csv
+*.png
+*.jpg
+*.gif
+graphs/
+plots/
+charts/
+export_*
+backup_*
+
+# User data
+user_data/
+patient_data/
+profiles/
+
+# Cache directories
+*_cache/
+cache/
+
+# Local development
+local_*
+dev_*
+override_*
+
+# Documentation that's not needed in container
+README.md
+TELEGRAM_SETUP.md
+TELEGRAM_TROUBLESHOOTING.md
+*.md
+!.env.example
+
+# Claude Code artifacts
+.claude/
+
+# Scripts not needed in container
+debug_*.py
+test_telegram_commands.py
+
+# Backup files
+*.backup
+*.bak
+*.old
