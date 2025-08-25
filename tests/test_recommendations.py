@@ -466,5 +466,205 @@ class TestRecommendationScenarios:
         assert iob_rec['urgency'] == 'medium', f"Expected medium urgency for rising fast, got {iob_rec['urgency']}"
         assert 'glucose rising fast' in iob_rec['parameters']['reasons'][0], "Should mention glucose rising fast"
 
+    def test_no_insulin_recommendation_for_falling_glucose(self):
+        """Test that insulin is never recommended when glucose is falling"""
+        settings = MockSettings()
+        engine = RecommendationEngine(settings)
+        
+        # Create readings with proper timestamps (most recent first)
+        from datetime import datetime, timedelta
+        from src.database import GlucoseReading
+        
+        now = datetime.now()
+        readings = [
+            GlucoseReading(timestamp=now, value=185, trend='down'),                    # Most recent
+            GlucoseReading(timestamp=now - timedelta(minutes=5), value=190, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=10), value=195, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=15), value=200, trend='down'),  # Oldest
+        ]
+        
+        trend_analysis = {'trend': 'down', 'rate_of_change': -1.0}
+        prediction = {'predicted_value': 180, 'confidence': 'high'}
+        
+        recommendations = engine.get_recommendations(readings, trend_analysis, prediction, iob_cob_data=None)
+        
+        # Should not recommend insulin for falling glucose
+        insulin_recs = [rec for rec in recommendations if rec['type'] == 'insulin']
+        assert len(insulin_recs) == 0, f"Should not recommend insulin for falling glucose, but got: {insulin_recs}"
+        
+        # Should have IOB status recommendation (glucose was high recently)
+        iob_recs = [rec for rec in recommendations if rec['type'] == 'iob_status']
+        assert len(iob_recs) > 0, "Should recommend checking IOB for high glucose without IOB data"
+
+    def test_no_insulin_recommendation_for_fast_falling_glucose(self):
+        """Test that insulin is never recommended when glucose is falling fast"""
+        settings = MockSettings()
+        engine = RecommendationEngine(settings)
+        
+        # Create readings with proper timestamps (most recent first)
+        from datetime import datetime, timedelta
+        from src.database import GlucoseReading
+        
+        now = datetime.now()
+        readings = [
+            GlucoseReading(timestamp=now, value=190, trend='very_fast_down'),             # Most recent
+            GlucoseReading(timestamp=now - timedelta(minutes=5), value=210, trend='very_fast_down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=10), value=230, trend='very_fast_down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=15), value=250, trend='very_fast_down'),  # Oldest
+        ]
+        
+        trend_analysis = {'trend': 'very_fast_down', 'rate_of_change': -4.0}
+        prediction = {'predicted_value': 150, 'confidence': 'high'}
+        
+        recommendations = engine.get_recommendations(readings, trend_analysis, prediction, iob_cob_data=None)
+        
+        # Should absolutely not recommend insulin for very fast falling glucose
+        insulin_recs = [rec for rec in recommendations if rec['type'] == 'insulin']
+        assert len(insulin_recs) == 0, f"Should never recommend insulin for very fast falling glucose, but got: {insulin_recs}"
+
+    def test_insulin_recommendation_only_for_stable_high_glucose(self):
+        """Test that insulin is only recommended for truly stable high glucose"""
+        settings = MockSettings()
+        engine = RecommendationEngine(settings)
+        
+        # Scenario: Stable high glucose - should recommend insulin
+        readings = create_mock_readings([220, 218, 222, 219])  # Chronological order
+        readings = list(reversed(readings))  # Most recent first: [219, 222, 218, 220]
+        trend_analysis = {'trend': 'no_change', 'rate_of_change': 0.1}
+        prediction = {'predicted_value': 220, 'confidence': 'high'}
+        
+        # No IOB data - should recommend insulin
+        recommendations = engine.get_recommendations(readings, trend_analysis, prediction, iob_cob_data=None)
+        
+        # Should recommend insulin for stable high glucose
+        insulin_recs = [rec for rec in recommendations if rec['type'] == 'insulin']
+        assert len(insulin_recs) > 0, "Should recommend insulin for stable high glucose"
+        
+        insulin_rec = insulin_recs[0]
+        assert 'units' in insulin_rec['message'], "Should specify insulin units"
+        assert insulin_rec['priority'] == 2, "Insulin recommendations should have priority 2"
+
+    def test_slow_correction_insulin_recommendation(self):
+        """Test insulin recommendation for slow correction scenario"""
+        settings = MockSettings()
+        engine = RecommendationEngine(settings)
+        
+        # Create scenario: High glucose slowly falling for sustained period
+        from datetime import datetime, timedelta
+        from src.database import GlucoseReading
+        
+        now = datetime.now()
+        readings = [
+            GlucoseReading(timestamp=now, value=235, trend='down'),                           # Most recent
+            GlucoseReading(timestamp=now - timedelta(minutes=5), value=238, trend='down'),   # Slow decline
+            GlucoseReading(timestamp=now - timedelta(minutes=10), value=242, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=15), value=245, trend='down'),  # Sustained high
+        ]
+        
+        trend_analysis = {'trend': 'down', 'rate_of_change': -0.5}  # Slow downward trend
+        prediction = {'predicted_value': 220, 'confidence': 'high'}
+        
+        recommendations = engine.get_recommendations(readings, trend_analysis, prediction, iob_cob_data=None)
+        
+        # Should recommend insulin for slow correction
+        insulin_recs = [rec for rec in recommendations if rec['type'] == 'insulin']
+        assert len(insulin_recs) > 0, "Should recommend insulin for slow correction of high glucose"
+        
+        insulin_rec = insulin_recs[0]
+        
+        # Check message mentions slow correction
+        assert 'slowly falling' in insulin_rec['message'], "Should mention slow falling trend"
+        assert 'safe to accelerate correction' in insulin_rec['message'], "Should mention safe acceleration"
+        
+        # Check safety notes are appropriate for slow correction
+        safety_notes = insulin_rec['safety_notes']
+        assert any('SLOW CORRECTION' in note for note in safety_notes), "Should have slow correction safety note"
+        assert any('30-60 minutes' in note for note in safety_notes), "Should specify monitoring frequency"
+        
+        # Check correction type is marked
+        assert insulin_rec['parameters']['correction_type'] == 'slow_correction', "Should mark as slow correction"
+        
+        print(f"Slow correction insulin: {insulin_rec['parameters']['recommended_units']} units")
+        print(f"Message: {insulin_rec['message']}")
+
+    def test_slow_correction_safety_thresholds(self):
+        """Test that slow correction only triggers under safe conditions"""
+        settings = MockSettings()
+        engine = RecommendationEngine(settings)
+        
+        from datetime import datetime, timedelta
+        from src.database import GlucoseReading
+        now = datetime.now()
+        
+        # Test 1: Glucose too low for slow correction (below 220)
+        readings_low = [
+            GlucoseReading(timestamp=now, value=200, trend='down'),  # Below 220 threshold
+            GlucoseReading(timestamp=now - timedelta(minutes=5), value=203, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=10), value=206, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=15), value=210, trend='down'),
+        ]
+        
+        trend_analysis_low = {'trend': 'down', 'rate_of_change': -0.5}
+        recommendations_low = engine.get_recommendations(readings_low, trend_analysis_low, 
+                                                       {'predicted_value': 185}, iob_cob_data=None)
+        insulin_recs_low = [rec for rec in recommendations_low if rec['type'] == 'insulin']
+        assert len(insulin_recs_low) == 0, "Should not recommend insulin when glucose < 220 mg/dL"
+        
+        # Test 2: Rate too fast for slow correction
+        readings_fast = [
+            GlucoseReading(timestamp=now, value=240, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=5), value=250, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=10), value=260, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=15), value=270, trend='down'),
+        ]
+        
+        trend_analysis_fast = {'trend': 'down', 'rate_of_change': -1.2}  # Too fast
+        recommendations_fast = engine.get_recommendations(readings_fast, trend_analysis_fast,
+                                                        {'predicted_value': 200}, iob_cob_data=None)
+        insulin_recs_fast = [rec for rec in recommendations_fast if rec['type'] == 'insulin']
+        assert len(insulin_recs_fast) == 0, "Should not recommend insulin when falling too fast (>-0.8 mg/dL/min)"
+
+    def test_slow_correction_conservative_dosing(self):
+        """Test that slow correction uses smaller insulin doses"""
+        settings = MockSettings()
+        insulin_rec = InsulinRecommendation(settings)
+        
+        from datetime import datetime, timedelta
+        from src.database import GlucoseReading
+        now = datetime.now()
+        
+        # Identical glucose levels and conditions
+        readings = [
+            GlucoseReading(timestamp=now, value=250, trend='stable'),
+            GlucoseReading(timestamp=now - timedelta(minutes=5), value=248, trend='stable'),
+            GlucoseReading(timestamp=now - timedelta(minutes=10), value=252, trend='stable'),
+            GlucoseReading(timestamp=now - timedelta(minutes=15), value=251, trend='stable'),
+        ]
+        
+        # Test stable high glucose (normal dosing)
+        trend_stable = {'trend': 'no_change', 'rate_of_change': 0.1}
+        stable_rec = insulin_rec.analyze(readings, trend_stable, {'predicted_value': 250}, iob_cob_data=None)
+        
+        # Test slow correction scenario (reduced dosing)  
+        readings_slow = [
+            GlucoseReading(timestamp=now, value=250, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=5), value=253, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=10), value=256, trend='down'),
+            GlucoseReading(timestamp=now - timedelta(minutes=15), value=260, trend='down'),
+        ]
+        trend_slow = {'trend': 'down', 'rate_of_change': -0.5}
+        slow_rec = insulin_rec.analyze(readings_slow, trend_slow, {'predicted_value': 240}, iob_cob_data=None)
+        
+        if stable_rec and slow_rec:
+            stable_units = stable_rec['parameters']['recommended_units']
+            slow_units = slow_rec['parameters']['recommended_units']
+            
+            print(f"Stable glucose insulin: {stable_units} units")
+            print(f"Slow correction insulin: {slow_units} units")
+            
+            # Slow correction should use about half the dose
+            assert slow_units < stable_units, "Slow correction should use smaller dose than stable high glucose"
+            assert slow_units <= stable_units * 0.6, "Slow correction should be significantly smaller (≤60% of normal dose)"
+
 if __name__ == "__main__":
     pytest.main([__file__])

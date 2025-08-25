@@ -27,27 +27,32 @@ class GlucosePredictor:
         # Sort readings chronologically (oldest first)
         sorted_readings = sorted(readings, key=lambda r: r.timestamp)
         
+        # Use same time window as trend analyzer for consistency
+        # Limit to most recent TREND_CALCULATION_POINTS readings
+        analysis_count = min(len(sorted_readings), self.settings.trend_calculation_points)
+        recent_readings = sorted_readings[-analysis_count:]  # Take most recent readings
+        
         # Try multiple prediction methods and select the best
         predictions = []
         
         # Method 1: Linear extrapolation
-        linear_pred = self._linear_extrapolation(sorted_readings)
+        linear_pred = self._linear_extrapolation(recent_readings)
         if linear_pred:
             predictions.append(linear_pred)
         
         # Method 2: Polynomial fitting (if enough data)
-        if len(sorted_readings) >= 5:
-            poly_pred = self._polynomial_prediction(sorted_readings)
+        if len(recent_readings) >= 5:
+            poly_pred = self._polynomial_prediction(recent_readings)
             if poly_pred:
                 predictions.append(poly_pred)
         
         # Method 3: Exponential smoothing
-        exp_pred = self._exponential_smoothing_prediction(sorted_readings)
+        exp_pred = self._exponential_smoothing_prediction(recent_readings)
         if exp_pred:
             predictions.append(exp_pred)
         
         # Select best prediction based on confidence and reasonableness
-        best_prediction = self._select_best_prediction(predictions, sorted_readings)
+        best_prediction = self._select_best_prediction(predictions, recent_readings)
         
         return best_prediction
     

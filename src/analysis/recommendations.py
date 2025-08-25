@@ -62,8 +62,18 @@ class InsulinRecommendation(RecommendationBase):
         if current_value < self.settings.high_glucose_threshold:
             return None
         
+        # Block insulin for rapidly falling glucose
         if trend_analysis.get('trend') in ['fast_down', 'very_fast_down']:
             return None
+        
+        # For slow downward trends, allow small insulin if glucose is very high
+        trend = trend_analysis.get('trend')
+        rate_of_change = trend_analysis.get('rate_of_change', 0)
+        
+        if trend == 'down':
+            # Only allow insulin for slow down trends with very high glucose
+            if not self._is_safe_slow_correction(current_value, rate_of_change, readings):
+                return None
         
         # Check if values have been stable and elevated for several readings
         if not self._is_stable_elevated_pattern(readings):
@@ -82,10 +92,31 @@ class InsulinRecommendation(RecommendationBase):
         
         insulin_units = (adjusted_excess / self.settings.insulin_effectiveness) * self.settings.insulin_unit_ratio
         
+        # For slow correction scenarios, reduce dose by 50% since glucose is already falling
+        if trend_analysis.get('trend') == 'down':
+            insulin_units *= 0.5
+        
         # Safety limits
         insulin_units = max(0.1, min(2.0, insulin_units))  # Between 0.1 and 2.0 units
         
         message = self._generate_insulin_message(current_value, insulin_units, trend_analysis, current_iob)
+        
+        # Determine safety notes based on scenario
+        is_slow_correction = trend_analysis.get('trend') == 'down'
+        
+        if is_slow_correction:
+            safety_notes = [
+                "This is not professional advice - use your own judgment",
+                "SLOW CORRECTION: Monitor glucose every 30-60 minutes after insulin",
+                "Glucose is falling slowly - small dose to accelerate correction safely",
+                "Stop if glucose drops faster than -1.5 mg/dL/min after insulin"
+            ]
+        else:
+            safety_notes = [
+                "This is not professional advice - use your own judgment", 
+                "Monitor glucose closely after insulin administration",
+                "Consider current IOB in decision making"
+            ]
         
         return {
             'type': 'insulin',
@@ -99,13 +130,10 @@ class InsulinRecommendation(RecommendationBase):
                 'adjusted_excess': round(adjusted_excess, 1),
                 'current_iob': round(current_iob, 1),
                 'iob_adjustment': round(iob_adjustment, 1),
-                'calculation_basis': f"Target: {target_glucose} mg/dL, IOB adjusted"
+                'calculation_basis': f"Target: {target_glucose} mg/dL, IOB adjusted",
+                'correction_type': 'slow_correction' if is_slow_correction else 'standard'
             },
-            'safety_notes': [
-                "This is not professional advice - use your own judgment",
-                "Monitor glucose closely after insulin administration",
-                "Consider current IOB in decision making"
-            ]
+            'safety_notes': safety_notes
         }
     
     def _is_stable_elevated_pattern(self, readings: List[GlucoseReading]) -> bool:
@@ -126,12 +154,61 @@ class InsulinRecommendation(RecommendationBase):
         if (max_val - min_val) > 40:  # Too much variation
             return False
         
+        # Check if glucose is consistently falling (unsafe for insulin)
+        # readings[0] is most recent, readings[-1] is oldest in the recent_values
+        # If most recent < oldest - 10, it's falling significantly
+        if recent_values[0] < recent_values[-1] - 10:  # Falling >10 mg/dL over 4 readings
+            return False
+        
+        return True
+    
+    def _is_safe_slow_correction(self, current_value: float, rate_of_change: float, 
+                               readings: List[GlucoseReading]) -> bool:
+        """Check if it's safe to give insulin during slow downward trend"""
+        
+        # Safety threshold 1: Glucose must be significantly high for safety margin
+        high_safety_threshold = 220.0  # Much higher than normal high threshold (180)
+        if current_value < high_safety_threshold:
+            return False
+        
+        # Safety threshold 2: Rate must be slow enough that insulin won't cause rapid drop
+        # Allow rates between -0.1 and -0.8 mg/dL/min (slow but not too slow)
+        min_rate = -0.8  # Slower than this is too slow (might not need insulin)
+        max_rate = -0.1  # Faster than this is too fast (approaching dangerous territory)
+        
+        if rate_of_change > max_rate or rate_of_change < min_rate:
+            return False
+        
+        # Safety threshold 3: Pattern must be sustained (consistent slow decline)
+        if len(readings) < 4:
+            return False
+            
+        recent_values = [r.value for r in readings[:4]]
+        
+        # Check that all recent values are high (sustained high glucose)
+        if min(recent_values) < high_safety_threshold:
+            return False
+            
+        # Check that trend is consistently downward but not too steep
+        # Values should be decreasing but slowly
+        for i in range(len(recent_values) - 1):
+            if recent_values[i] >= recent_values[i + 1]:  # Not consistently down
+                return False
+        
+        # Check that the total drop over 4 readings is reasonable for slow correction
+        total_drop = recent_values[-1] - recent_values[0]  # Oldest - newest
+        max_reasonable_drop = 20.0  # Max 20 mg/dL drop over ~15 minutes for "slow"
+        
+        if abs(total_drop) > max_reasonable_drop:
+            return False
+            
         return True
     
     def _generate_insulin_message(self, current_value: float, 
                                  insulin_units: float, trend_analysis: Dict,
                                  current_iob: float = 0.0) -> str:
         trend = trend_analysis.get('trend', 'no_change')
+        rate_of_change = trend_analysis.get('rate_of_change', 0)
         
         base_msg = f"Consider {insulin_units:.1f} units of rapid-acting insulin. "
         base_msg += f"Current glucose: {current_value:.0f} mg/dL"
@@ -140,6 +217,9 @@ class InsulinRecommendation(RecommendationBase):
             base_msg += " (rising)"
         elif trend == 'no_change':
             base_msg += " (stable)"
+        elif trend == 'down':
+            # Special message for slow correction scenario
+            base_msg += f" (slowly falling at {abs(rate_of_change):.1f} mg/dL/min - safe to accelerate correction)"
         
         if current_iob > 0.1:
             base_msg += f", IOB: {current_iob:.1f}u"
