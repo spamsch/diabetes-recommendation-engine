@@ -86,5 +86,5 @@ LABEL maintainer="Glucose Monitor" \
       version="1.0" \
       org.label-schema.name="glucose-monitor" \
       org.label-schema.description="Automated glucose monitoring and analysis system" \
-      org.label-schema.vcs-url="https://github.com/user/dexcom-analyze" \
+      org.label-schema.vcs-url="https://github.com/spamsch/diabetes-recommendation-engine" \
       org.label-schema.schema-version="1.0"
