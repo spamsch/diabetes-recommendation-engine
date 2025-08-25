@@ -1,6 +1,6 @@
 # Glucose Monitoring System
 
-A Python application for monitoring glucose levels from Dexcom sensors, providing intelligent analysis, predictions, and recommendations to help manage diabetes. This is a fully vibe coded app and will contain a lot of emojis and other nonsense. But it works for me and has been very helpful.
+A Python application for monitoring glucose levels from Dexcom sensors, providing intelligent analysis, predictions, and recommendations to help manage diabetes. This is a fully vibe coded app (4 hours total using Claude Code and GPT-5) and will contain a lot of emojis and other nonsensensical text. But it works for me and has been very helpful. The recommendations have become pretty decent.
 
 My use-case is to reduce mental load while handling the glucose levels for my child. I love that a Telegram bot is helping me making decisions.
 My goal is to trust this software to alert me and give valid recommendations. I do not want to look at the Omnipod active insulin and the current
