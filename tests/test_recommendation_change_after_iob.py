@@ -115,7 +115,7 @@ class TestRecommendationChangeAfterIOB:
 
             return recommendations, iob_cob_data
 
-        # Create high glucose scenario that would trigger insulin recommendation
+        # Create high glucose scenario that would trigger insulin rec
         base_time = datetime.now()
         high_glucose_readings = []
 
@@ -141,11 +141,11 @@ class TestRecommendationChangeAfterIOB:
 
         # Get initial recommendations (should include insulin recommendation)
         print("\n=== STEP 1: GET INITIAL RECOMMENDATIONS ===")
-        initial_recommendations, initial_iob_cob = get_current_recommendations()
-        print(f"Initial recommendations count: {len(initial_recommendations)}")
+        initial_recs, initial_iob_cob = get_current_recommendations()
+        print(f"Initial recommendations count: {len(initial_recs)}")
 
         # Find insulin recommendation
-        insulin_recs = [r for r in initial_recommendations
+        insulin_recs = [r for r in initial_recs
                         if r.get('type') == 'insulin']
         print(f"Insulin recommendations found: {len(insulin_recs)}")
 
@@ -218,7 +218,7 @@ class TestRecommendationChangeAfterIOB:
             is_override = False
 
         print("\n=== FINAL STATUS VERIFICATION ===")
-        print(f"Current IOB: {current_iob:.1f} units (override: {is_override})")
+        print(f"Current IOB: {current_iob:.1f}u (override: {is_override})")
         print(f"Expected IOB: {iob_value} units")
 
         # Assertions to verify the test worked correctly
