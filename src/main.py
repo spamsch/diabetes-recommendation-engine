@@ -90,13 +90,6 @@ class GlucoseMonitor:
         # Start user input handler
         self.user_input_handler.start()
         
-        # Send startup notification
-        self.telegram_notifier.send_alert(
-            "startup", 
-            "Glucose monitoring system started successfully", 
-            urgency='low'
-        )
-        
         while self.running:
             try:
                 self._monitoring_cycle()
@@ -246,7 +239,7 @@ class GlucoseMonitor:
             logger.info(f"Waiting {wait_seconds:.0f} seconds for next reading...")
             
             # Sleep in small intervals to allow for graceful shutdown
-            sleep_interval = min(30, wait_seconds)  # Sleep max 30 seconds at a time
+            sleep_interval = min(2, wait_seconds)  # Sleep max 2 seconds at a time
             total_slept = 0
             
             while total_slept < wait_seconds and self.running:
@@ -380,11 +373,13 @@ class GlucoseMonitor:
             wait_seconds = self.sensor_client.wait_for_next_reading()
             return {
                 'wait_seconds': wait_seconds,
-                'last_reading_time': self.sensor_client.last_reading_time
+                'last_reading_time': self.sensor_client.last_reading_time,
+                'next_expected_time': self.sensor_client.next_expected_reading_time
             }
         except Exception as e:
             logger.error(f"Error getting next reading time: {e}")
             return None
+    
     
     def _on_quit_requested(self):
         """Callback when user requests quit"""

@@ -1,13 +1,13 @@
 import logging
 import numpy as np
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import timedelta
 from scipy import stats
-from scipy.interpolate import interp1d
 from ..database import GlucoseReading
 from ..config import Settings
 
 logger = logging.getLogger(__name__)
+
 
 class GlucosePredictor:
     def __init__(self, settings: Settings):
@@ -29,8 +29,12 @@ class GlucosePredictor:
         
         # Use same time window as trend analyzer for consistency
         # Limit to most recent TREND_CALCULATION_POINTS readings
-        analysis_count = min(len(sorted_readings), self.settings.trend_calculation_points)
-        recent_readings = sorted_readings[-analysis_count:]  # Take most recent readings
+        analysis_count = min(
+            len(sorted_readings),
+            self.settings.trend_calculation_points
+        )
+        # Take most recent readings
+        recent_readings = sorted_readings[-analysis_count:]
         
         # Try multiple prediction methods and select the best
         predictions = []
@@ -56,21 +60,30 @@ class GlucosePredictor:
         
         return best_prediction
     
-    def _linear_extrapolation(self, readings: List[GlucoseReading]) -> Optional[Dict]:
+    def _linear_extrapolation(
+            self, readings: List[GlucoseReading]
+    ) -> Optional[Dict]:
         """Predict using linear extrapolation"""
         try:
             values = [r.value for r in readings]
             timestamps = [r.timestamp for r in readings]
             
             # Convert timestamps to minutes from most recent reading
-            reference_time = timestamps[-1]  # Use most recent reading as reference
-            time_minutes = [(ts - reference_time).total_seconds() / 60.0 for ts in timestamps]
+            reference_time = timestamps[-1]
+            time_minutes = [
+                (ts - reference_time).total_seconds() / 60.0
+                for ts in timestamps
+            ]
             
             # Check if all timestamps are identical
             if all(t == time_minutes[0] for t in time_minutes):
-                logger.debug("All timestamps are identical, using current value as prediction")
+                logger.debug(
+                    "All timestamps identical, using current value as prediction"
+                )
                 current_time = timestamps[-1]
-                future_time = current_time + timedelta(minutes=self.settings.prediction_minutes_ahead)
+                future_time = current_time + timedelta(
+                    minutes=self.settings.prediction_minutes_ahead
+                )
                 return {
                     'predicted_value': round(values[-1], 1),
                     'confidence': 'high',

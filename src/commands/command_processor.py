@@ -425,6 +425,7 @@ class CommandProcessor:
                 error=f"Error getting next reading time: {e}"
             )
     
+    
     def execute_debug(self, telegram_config: Dict, message_info: Dict) -> CommandResult:
         """Execute debug command - show diagnostic information"""
         try:

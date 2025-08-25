@@ -14,9 +14,11 @@ class MockDexcomClient:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.last_reading_time = None
+        self.last_reading_value = None
         self.current_value = 120.0  # Starting glucose value
         self.trend_direction = "no_change"
         self.reading_count = 0
+        self.next_expected_reading_time = None  # When next reading should be available (timestamp + 305s)
         
         # Simulate various scenarios for testing
         self.scenario_readings = self._generate_test_scenarios()
@@ -85,8 +87,22 @@ class MockDexcomClient:
                 unit="mg/dL"
             )
             
+            # Check if this is the same reading we already processed
+            if (self.last_reading_time == reading.timestamp and 
+                self.last_reading_value == value):
+                logger.info("Same mock reading already retrieved, will retry in 20 seconds")
+                # For duplicate readings, wait only 20 seconds before retrying
+                # instead of the full interval (sensor hasn't updated yet)
+                self.next_expected_reading_time = datetime.now() + timedelta(seconds=20)
+                return None
+            
             self.last_reading_time = reading.timestamp
+            self.last_reading_value = value
             self.current_value = value
+            
+            # Calculate next expected reading time: timestamp + configured interval
+            self.next_expected_reading_time = reading.timestamp + timedelta(seconds=self.settings.sensor_reading_interval_seconds)
+            logger.info(f"Mock: Next reading expected at: {self.next_expected_reading_time.strftime('%H:%M:%S')} (timestamp + {self.settings.sensor_reading_interval_seconds}s)")
             
             logger.info(f"Mock reading: {reading.value} {reading.unit}, trend: {reading.trend}")
             return reading
@@ -185,12 +201,35 @@ class MockDexcomClient:
         return random.choice(trends)
     
     def is_new_reading_available(self) -> bool:
-        """Always return True for testing"""
-        return True
+        """Check if a new reading should be available"""
+        # Always allow first reading
+        if self.next_expected_reading_time is None:
+            return True
+        
+        # Check if we've reached the expected next reading time
+        now = datetime.now()
+        if now >= self.next_expected_reading_time:
+            logger.info(f"Mock: Expected reading time reached ({self.next_expected_reading_time.strftime('%H:%M:%S')})")
+            return True
+        
+        time_until_next = (self.next_expected_reading_time - now).total_seconds()
+        logger.info(f"Mock: Next reading not due for {time_until_next:.0f} seconds")
+        return False
     
     def wait_for_next_reading(self) -> float:
-        """Return minimal wait time for testing"""
-        return 1.0
+        """Return wait time for next reading based on timestamp + 305s"""
+        # If no expected time set, don't wait
+        if self.next_expected_reading_time is None:
+            return 0.0
+        
+        now = datetime.now()
+        if now >= self.next_expected_reading_time:
+            return 0.0
+        
+        wait_seconds = (self.next_expected_reading_time - now).total_seconds()
+        logger.info(f"Mock: Waiting {wait_seconds:.0f} seconds for next reading (based on sensor timestamp + {self.settings.sensor_reading_interval_seconds}s)")
+        return wait_seconds
+    
     
     def reconnect(self) -> bool:
         """Always succeed for testing"""

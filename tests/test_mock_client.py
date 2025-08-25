@@ -8,6 +8,7 @@ class MockSettings:
     def __init__(self):
         self.poll_interval_minutes = 5
         self.carb_to_glucose_ratio = 3.5
+        self.sensor_reading_interval_seconds = 305
 
 class TestMockDexcomClient:
     
@@ -137,9 +138,9 @@ class TestMockDexcomClient:
         assert self.client.reconnect() == True
         assert self.client.is_new_reading_available() == True
         
-        # Wait time should be minimal for testing
+        # Wait time should be 0.0 when no expected time is set
         wait_time = self.client.wait_for_next_reading()
-        assert wait_time == 1.0
+        assert wait_time == 0.0
     
     def test_realistic_glucose_values(self):
         """Test that generated values are realistic"""
@@ -215,6 +216,36 @@ class TestMockDexcomClient:
         
         # Count should have progressed
         assert self.client.reading_count == initial_count + 3
+    
+    def test_timestamp_based_scheduling(self):
+        """Test the new timestamp + 305s scheduling behavior"""
+        from datetime import datetime, timedelta
+        
+        # Initially, no expected time should be set
+        assert self.client.next_expected_reading_time is None
+        assert self.client.is_new_reading_available() == True
+        
+        # Get a reading to set the expected time
+        reading1 = self.client.get_current_reading()
+        assert reading1 is not None
+        
+        # Should have set next expected time to timestamp + 305s
+        expected_time = reading1.timestamp + timedelta(seconds=305)
+        assert self.client.next_expected_reading_time == expected_time
+        
+        # Should not be available until expected time (unless it's a duplicate)
+        is_available = self.client.is_new_reading_available()
+        if not is_available:
+            # Wait time should be calculated correctly
+            wait_time = self.client.wait_for_next_reading()
+            expected_wait = (expected_time - datetime.now()).total_seconds()
+            # Allow some tolerance for test execution time
+            assert abs(wait_time - expected_wait) < 2.0
+        
+        # Test that we can manually set expected time to past to trigger availability
+        self.client.next_expected_reading_time = datetime.now() - timedelta(seconds=1)
+        assert self.client.is_new_reading_available() == True
+    
 
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -1,8 +1,15 @@
 import logging
 import threading
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from typing import Optional, Callable, Dict
+
+try:
+    import select
+    HAS_SELECT = True
+except ImportError:
+    HAS_SELECT = False
 from ..database import GlucoseDatabase
 from ..config import Settings
 from ..commands import CommandProcessor
@@ -61,7 +68,10 @@ class UserInputHandler:
         """Stop the input handler"""
         self.running = False
         if self.input_thread and self.input_thread.is_alive():
-            self.input_thread.join(timeout=1.0)
+            print("\nShutting down... (press Enter to speed up)")
+            self.input_thread.join(timeout=2.0)
+            if self.input_thread.is_alive():
+                logger.warning("User input thread did not shut down cleanly")
         logger.info("User input handler stopped")
     
     def register_callback(self, event: str, callback: Callable):
@@ -72,15 +82,42 @@ class UserInputHandler:
     
     def _input_loop(self):
         """Main input loop running in separate thread"""
+        prompt_shown = False
+        
         while self.running:
             try:
-                # Use input() with prompt
-                command_line = input("\nEnter command (h for help): ").strip()
-                
-                if not command_line:
-                    continue
-                
-                self._process_command(command_line)
+                if HAS_SELECT and hasattr(sys.stdin, 'fileno'):
+                    # Use non-blocking input with select (Unix/Linux/macOS)
+                    if not prompt_shown:
+                        print("\nEnter command (h for help): ", end='', flush=True)
+                        prompt_shown = True
+                    
+                    # Wait for input with 0.5 second timeout
+                    if sys.stdin in select.select([sys.stdin], [], [], 0.5)[0]:
+                        command_line = input().strip()
+                        prompt_shown = False  # Reset so prompt shows again after command
+                        
+                        if not command_line:
+                            continue
+                        
+                        self._process_command(command_line)
+                    # If no input available, loop continues and checks self.running
+                else:
+                    # Fallback - blocking input but with better shutdown message
+                    if not prompt_shown:
+                        print("\nEnter command (h for help): ", end='', flush=True)
+                        prompt_shown = True
+                    
+                    try:
+                        command_line = input().strip()
+                        prompt_shown = False  # Reset so prompt shows again after command
+                        
+                        if not command_line:
+                            continue
+                        
+                        self._process_command(command_line)
+                    except (EOFError, KeyboardInterrupt):
+                        break
                 
             except (EOFError, KeyboardInterrupt):
                 # Handle Ctrl+C or Ctrl+D gracefully
@@ -211,6 +248,7 @@ class UserInputHandler:
                 
         except Exception as e:
             print(f"Error getting next reading time: {e}")
+    
     
     def _handle_reading_command(self, args):
         """Handle reading command to show latest sensor reading and recommendations"""

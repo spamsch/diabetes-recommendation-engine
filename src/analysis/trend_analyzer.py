@@ -203,9 +203,20 @@ class TrendAnalyzer:
         patterns = []
         current_value = values[-1]
         
-        # Check approaching low threshold
+        # Calculate local trend direction for threshold approach logic
+        trend_direction = "stable"
+        if len(values) >= 3:
+            recent_values = values[-3:]
+            recent_change = recent_values[-1] - recent_values[0]
+            if recent_change > 2:  # Rising trend
+                trend_direction = "rising"
+            elif recent_change < -2:  # Falling trend
+                trend_direction = "falling"
+        
+        # Check approaching low threshold (only if falling or stable)
         if (current_value <= self.settings.low_glucose_threshold * 1.2 and 
-            current_value > self.settings.low_glucose_threshold):
+            current_value > self.settings.low_glucose_threshold and
+            trend_direction in ["falling", "stable"]):
             patterns.append({
                 'type': 'approaching_low',
                 'severity': 'medium',
@@ -224,9 +235,10 @@ class TrendAnalyzer:
                 'description': f"Critical low glucose level detected"
             })
         
-        # Check approaching high threshold
+        # Check approaching high threshold (only if rising or stable)
         elif (current_value >= self.settings.high_glucose_threshold * 0.9 and 
-              current_value < self.settings.high_glucose_threshold):
+              current_value < self.settings.high_glucose_threshold and
+              trend_direction in ["rising", "stable"]):
             patterns.append({
                 'type': 'approaching_high',
                 'severity': 'medium',

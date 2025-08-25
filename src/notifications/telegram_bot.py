@@ -279,8 +279,14 @@ class TelegramNotifier:
         if not self.enabled:
             return False
         
-        test_message = "Glucose Monitor Test\n\nConnection test successful!"
-        return self._send_message(test_message)
+        # Test connection without sending message
+        try:
+            url = f"{self.api_url}/getMe"
+            response = requests.get(url, timeout=10)
+            return response.status_code == 200 and response.json().get('ok', False)
+        except Exception as e:
+            logger.error(f"Telegram connection test failed: {e}")
+            return False
     
     def get_bot_info(self) -> Dict:
         """Get information about the bot (for debugging)"""
@@ -653,7 +659,7 @@ class TelegramCommandBridge:
             'ping': self._handle_ping,
             # Sensor reading command
             'reading': self._handle_reading,
-            'r': self._handle_reading
+            'r': self._handle_reading,
         }
         
         for command, handler in commands.items():
@@ -761,6 +767,7 @@ class TelegramCommandBridge:
                        "Use the terminal interface for real-time sensor information")
         except Exception as e:
             return f"Error getting next reading time: {e}"
+    
     
     def _handle_reading(self, args: List[str], message: Dict) -> str:
         """Handle reading command - show latest sensor reading and recommendations"""

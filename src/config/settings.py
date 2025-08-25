@@ -184,6 +184,10 @@ class Settings:
     def trend_very_fast_up_threshold(self) -> float:
         return float(os.getenv("TREND_VERY_FAST_UP_THRESHOLD", "4.0"))
     
+    @property
+    def sensor_reading_interval_seconds(self) -> int:
+        return int(os.getenv("SENSOR_READING_INTERVAL_SECONDS", "305"))
+    
     def to_dict(self) -> dict:
         return {
             "dexcom_username": self.dexcom_username,
@@ -210,5 +214,6 @@ class Settings:
             "trend_calculation_points": self.trend_calculation_points,
             "enable_insulin_recommendations": self.enable_insulin_recommendations,
             "enable_carb_recommendations": self.enable_carb_recommendations,
-            "carb_effectiveness": self.carb_effectiveness
+            "carb_effectiveness": self.carb_effectiveness,
+            "sensor_reading_interval_seconds": self.sensor_reading_interval_seconds
         }

@@ -1,10 +1,17 @@
 # Diabetes Recommendation Engine
 
-A Python application for monitoring glucose levels from Dexcom sensors, providing intelligent analysis, predictions, and recommendations to help manage diabetes. This is a fully vibe coded app (4 hours total using Claude Code and GPT-5) and will contain a lot of emojis and other nonsensensical text. But it works for me and has been very helpful. The recommendations have become pretty decent.
+A Python application for monitoring glucose levels from Dexcom sensors,
+providing intelligent analysis, predictions, and recommendations to help manage
+diabetes. This is a fully vibe coded app (4 hours total using Claude Code and
+GPT-5 for initial and working implementation) and will contain a lot of emojis
+and other nonsensensical text. But it works for me and has been very helpful.
+The recommendations have become pretty decent.
 
-My use-case is to reduce mental load while handling the glucose levels for my child. I love that a Telegram bot is helping me making decisions.
-My goal is to trust this software to alert me and give valid recommendations. I do not want to look at the Omnipod active insulin and the current
-value of the Dexcom and think about a solution.
+My use-case is to reduce mental load while handling the glucose levels for my
+child. I love that a Telegram bot is helping me making decisions.  My goal is to
+trust this software to alert me and give valid recommendations. I do not want to
+look at the Omnipod active insulin and the current value of the Dexcom and think
+about a solution.
 
 One next step could be to integrate an LLM. But not sure of that really makes sense.
 
@@ -48,6 +55,7 @@ One next step could be to integrate an LLM. But not sure of that really makes se
 - **Real-time Command Processing**: Full command support via Telegram bot
 - **IOB Shortcuts**: Send plain numbers (e.g., "2.4" or "2,4") to set IOB quickly
 - **Interactive Commands**: Log insulin, carbs, check status, get history
+- **Monitoring Sync**: Synchronize monitoring thread with Dexcom's actual update schedule
 - **Formatted Notifications**: Rich messages with priority levels and safety notes
 
 #### Available Telegram Commands
@@ -63,6 +71,7 @@ One next step could be to integrate an LLM. But not sure of that really makes se
 - Real-time terminal display with trend arrows
 - Color-coded glucose values (green/yellow/red based on thresholds)
 - IOB/COB status display with impact calculations
+- Interactive terminal commands including monitoring sync
 
 ### 🧪 Comprehensive Testing
 - Mock client for testing recommendations
@@ -114,6 +123,7 @@ TELEGRAM_CHAT_ID=your_chat_id
 | `DEXCOM_PASSWORD` | Dexcom Share password | *required* | |
 | `DEXCOM_OUS` | Outside US account | `false` | Set true for non-US |
 | `POLL_INTERVAL_MINUTES` | How often to check for new readings | `5` | Dexcom updates every 5min |
+| `SENSOR_READING_INTERVAL_SECONDS` | Wait time after reading timestamp | `305` | 300s + 5s buffer |
 | `ANALYSIS_WINDOW_SIZE` | Number of readings to analyze | `15` | 10-20 recommended |
 | `PREDICTION_MINUTES_AHEAD` | Prediction timeframe | `15` | Minutes ahead to predict |
 | `TREND_CALCULATION_POINTS` | Readings used for trend analysis | `3` | Recent readings for trends |
@@ -273,6 +283,9 @@ IOB updated to 2.4 units from telegram-shortcut
 Expected glucose effect: -96 mg/dL over next 60 minutes
 Last updated: 14:32
 ```
+
+### Automatic Timestamp-Based Scheduling
+The monitoring system automatically schedules the next reading check based on the Dexcom sensor's actual timestamp plus the configured interval (`SENSOR_READING_INTERVAL_SECONDS`). This ensures optimal synchronization with Dexcom's update schedule without manual intervention.
 
 ## Architecture
 

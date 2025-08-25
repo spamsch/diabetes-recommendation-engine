@@ -14,7 +14,7 @@ class DexcomClient:
         self.dexcom = None
         self.last_reading_time = None
         self.last_reading_value = None
-        self.last_processed_time = None  # When we last processed a reading
+        self.next_expected_reading_time = None  # When next reading should be available (timestamp + 305s)
         self._connect()
     
     def _connect(self):
@@ -55,13 +55,20 @@ class DexcomClient:
             # Check if this is the same reading we already processed
             if (self.last_reading_time == timestamp and 
                 self.last_reading_value == float(value)):
-                logger.debug("Same reading already retrieved, returning None")
+                logger.info("Same reading already retrieved, will retry in 20 seconds")
+                # For duplicate readings, wait only 20 seconds before retrying
+                # instead of the full interval (sensor hasn't updated yet)
+                self.next_expected_reading_time = datetime.now() + timedelta(seconds=20)
                 return None
             
             self.last_reading_time = timestamp
             self.last_reading_value = float(value)
-            self.last_processed_time = datetime.now()
-            logger.info(f"Retrieved glucose reading: {reading.value} {reading.unit}, trend: {reading.trend}")
+            
+            # Calculate next expected reading time: timestamp + configured interval
+            self.next_expected_reading_time = timestamp + timedelta(seconds=self.settings.sensor_reading_interval_seconds)
+            logger.info(f"Next reading expected at: {self.next_expected_reading_time.strftime('%H:%M:%S')} (timestamp + {self.settings.sensor_reading_interval_seconds}s)")
+            
+            logger.info(f"Retrieved glucose reading: {reading.value} {reading.unit}, trend: {reading.trend}, timestamp: {reading.timestamp}")
             return reading
             
         except Exception as e:
@@ -114,34 +121,33 @@ class DexcomClient:
         return "no_change"
     
     def is_new_reading_available(self) -> bool:
-        if self.last_processed_time is None:
+        # Always allow first reading
+        if self.next_expected_reading_time is None:
             return True
         
-        # Check if enough time has passed since we last processed a reading
-        time_since_last_processed = datetime.now() - self.last_processed_time
-        expected_interval = timedelta(minutes=self.settings.poll_interval_minutes)
+        # Check if we've reached the expected next reading time
+        now = datetime.now()
+        if now >= self.next_expected_reading_time:
+            logger.info(f"Expected reading time reached ({self.next_expected_reading_time.strftime('%H:%M:%S')})")
+            return True
         
-        # Only consider a new reading available if enough time has passed since processing
-        # This prevents multiple identical readings from being processed
-        logger.info(f"Time since last processed: {time_since_last_processed}, expected interval: {expected_interval}")
-        return time_since_last_processed >= expected_interval
+        time_until_next = (self.next_expected_reading_time - now).total_seconds()
+        logger.info(f"Next reading not due for {time_until_next:.0f} seconds")
+        return False
     
     def wait_for_next_reading(self) -> float:
-        if self.last_processed_time is None:
+        # If no expected time set, don't wait
+        if self.next_expected_reading_time is None:
             return 0.0
-        
-        expected_next_time = (
-            self.last_processed_time + 
-            timedelta(minutes=self.settings.poll_interval_minutes)
-        )
         
         now = datetime.now()
-        if now >= expected_next_time:
+        if now >= self.next_expected_reading_time:
             return 0.0
         
-        wait_seconds = (expected_next_time - now).total_seconds()
-        logger.info(f"Waiting {wait_seconds:.0f} seconds for next reading")
+        wait_seconds = (self.next_expected_reading_time - now).total_seconds()
+        logger.info(f"Waiting {wait_seconds:.0f} seconds for next reading (based on sensor timestamp + {self.settings.sensor_reading_interval_seconds}s)")
         return wait_seconds
+    
     
     def reconnect(self):
         logger.info("Attempting to reconnect to Dexcom...")
