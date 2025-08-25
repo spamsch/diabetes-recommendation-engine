@@ -10,20 +10,29 @@ from src.config.settings import Settings
 class TestStatusMessages:
     
     def setup_method(self):
-        # Create a temporary environment for testing
-        self.temp_env = tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False)
-        self.temp_env.write("""DEXCOM_USERNAME=test_user
-DEXCOM_PASSWORD=test_pass
-TELEGRAM_BOT_URL=https://api.telegram.org/bot123456:TEST/sendMessage
-TELEGRAM_CHAT_ID=123456789
-TELEGRAM_STATUS_INTERVAL_MINUTES=30
-TELEGRAM_STATUS_START_HOUR=7
-TELEGRAM_STATUS_END_HOUR=22
-""")
-        self.temp_env.close()
+        # Save original environment variables that we'll modify
+        self.original_env = {}
+        env_vars_to_override = [
+            'DEXCOM_USERNAME', 'DEXCOM_PASSWORD', 'TELEGRAM_BOT_URL',
+            'TELEGRAM_CHAT_ID', 'TELEGRAM_STATUS_INTERVAL_MINUTES',
+            'TELEGRAM_STATUS_START_HOUR', 'TELEGRAM_STATUS_END_HOUR'
+        ]
         
-        # Create settings instance
-        self.settings = Settings(self.temp_env.name)
+        for var in env_vars_to_override:
+            if var in os.environ:
+                self.original_env[var] = os.environ[var]
+        
+        # Set test environment variables directly
+        os.environ['DEXCOM_USERNAME'] = 'test_user'
+        os.environ['DEXCOM_PASSWORD'] = 'test_pass'
+        os.environ['TELEGRAM_BOT_URL'] = 'https://api.telegram.org/bot123456:TEST/sendMessage'
+        os.environ['TELEGRAM_CHAT_ID'] = '123456789'
+        os.environ['TELEGRAM_STATUS_INTERVAL_MINUTES'] = '30'
+        os.environ['TELEGRAM_STATUS_START_HOUR'] = '7'
+        os.environ['TELEGRAM_STATUS_END_HOUR'] = '22'
+        
+        # Create settings instance (will read from environment)
+        self.settings = Settings()
         
         # Mock the requests.post method to avoid actual API calls
         self.mock_requests_patcher = patch('src.notifications.telegram_bot.requests.post')
@@ -39,9 +48,18 @@ TELEGRAM_STATUS_END_HOUR=22
         self.telegram_notifier = TelegramNotifier(self.settings)
     
     def teardown_method(self):
-        # Clean up temporary environment file
-        if os.path.exists(self.temp_env.name):
-            os.unlink(self.temp_env.name)
+        # Restore original environment variables
+        env_vars_to_restore = [
+            'DEXCOM_USERNAME', 'DEXCOM_PASSWORD', 'TELEGRAM_BOT_URL',
+            'TELEGRAM_CHAT_ID', 'TELEGRAM_STATUS_INTERVAL_MINUTES',
+            'TELEGRAM_STATUS_START_HOUR', 'TELEGRAM_STATUS_END_HOUR'
+        ]
+        
+        for var in env_vars_to_restore:
+            if var in self.original_env:
+                os.environ[var] = self.original_env[var]
+            elif var in os.environ:
+                del os.environ[var]
         
         # Stop the mock
         self.mock_requests_patcher.stop()
