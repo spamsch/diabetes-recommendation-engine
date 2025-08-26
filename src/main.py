@@ -208,15 +208,16 @@ class GlucoseMonitor:
                     {'value': reading.value, 'timestamp': reading.timestamp},
                     trend_analysis
                 )
-        else:
-            # No recommendations - check if we should send a periodic status update
-            if self.telegram_notifier.should_send_status_message():
-                logger.info("Sending periodic status update to Telegram")
-                self.telegram_notifier.send_status_update(
-                    reading.value,
-                    trend_analysis.get('trend', 'no_change'),
-                    prediction
-                )
+        
+        # Check if we should send a periodic status update (regardless of recommendations)
+        if self.telegram_notifier.should_send_status_message():
+            logger.info("Sending periodic status update to Telegram")
+            self.telegram_notifier.send_status_update(
+                reading.value,
+                trend_analysis.get('trend', 'no_change'),
+                prediction,
+                recommendations  # Include recommendations in status message
+            )
         
         # Terminal output if enabled
         if self.settings.enable_terminal_output:

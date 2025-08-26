@@ -133,13 +133,14 @@ class TelegramNotifier:
             return start_hour <= current_hour <= end_hour
     
     def send_status_update(self, glucose_value: float, trend: str, 
-                          prediction: Optional[Dict] = None) -> bool:
+                          prediction: Optional[Dict] = None,
+                          recommendations: Optional[List[Dict]] = None) -> bool:
         """Send routine status update"""
         if not self.enabled:
             return False
         
         try:
-            message = self._format_status_message(glucose_value, trend, prediction)
+            message = self._format_status_message(glucose_value, trend, prediction, recommendations)
             success = self._send_message(message)
             
             if success:
@@ -221,7 +222,8 @@ class TelegramNotifier:
         return message
     
     def _format_status_message(self, glucose_value: float, trend: str, 
-                              prediction: Optional[Dict]) -> str:
+                              prediction: Optional[Dict],
+                              recommendations: Optional[List[Dict]] = None) -> str:
         """Format routine status message"""
         timestamp = datetime.now().strftime("%H:%M")
         trend_emoji = self._get_trend_emoji(trend)
@@ -238,7 +240,28 @@ class TelegramNotifier:
             message += f"Predicted ({pred_time}min): {pred_value} mg/dL\n"
             message += f"Confidence: {confidence.title()}\n"
         
-        message += "\n_This is a routine status update - no action needed._"
+        # Add recommendations if present
+        if recommendations:
+            message += f"\n*Recommendations ({len(recommendations)}):*\n"
+            for i, rec in enumerate(recommendations, 1):
+                rec_type = rec.get('type', 'general').replace('_', ' ').title()
+                priority = self._get_priority_emoji(rec)
+                message += f"{priority} *{rec_type}*\n"
+                message += f"{rec['message']}\n"
+                
+                # Add key parameters for specific recommendation types
+                if 'parameters' in rec:
+                    params = rec['parameters']
+                    if rec['type'] == 'insulin' and 'recommended_units' in params:
+                        message += f"Suggested: {params['recommended_units']} units\n"
+                    elif rec['type'] == 'carbohydrate' and 'recommended_carbs' in params:
+                        message += f"Suggested: {params['recommended_carbs']}g carbs\n"
+                
+                message += "\n"
+            
+            message += "_This is a routine status update with current recommendations._"
+        else:
+            message += "\n_This is a routine status update - no action needed._"
         
         return message
     
