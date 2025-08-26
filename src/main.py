@@ -2,7 +2,7 @@ import logging
 import time
 import signal
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 import argparse
 
@@ -16,18 +16,20 @@ from .terminal import UserInputHandler
 
 logger = logging.getLogger(__name__)
 
+
+
 class GlucoseMonitor:
     """Main glucose monitoring application"""
     
     def __init__(self, use_mock: bool = False, env_file: str = ".env"):
         self.running = True
         self.use_mock = use_mock
-        self.last_processed_reading = None  # Track last processed reading to avoid duplicates
-        
+        self.last_processed_reading = None
+
         # Initialize components
         self.settings = Settings(env_file)
         self.db = GlucoseDatabase(self.settings.database_path)
-        
+
         # Initialize sensor client
         if use_mock:
             self.sensor_client = MockDexcomClient(self.settings)
@@ -35,24 +37,25 @@ class GlucoseMonitor:
         else:
             self.sensor_client = DexcomClient(self.settings)
             logger.info("Using real Dexcom client")
-        
+
         # Initialize analyzers
         self.trend_analyzer = TrendAnalyzer(self.settings)
         self.predictor = GlucosePredictor(self.settings)
         self.iob_calculator = IOBCalculator(self.settings)
         self.recommendation_engine = RecommendationEngine(self.settings)
-        
+
         # Initialize notifier
         self.telegram_notifier = TelegramNotifier(self.settings)
-        
+
         # Initialize user input handler
         self.user_input_handler = UserInputHandler(self.db, self.settings)
-        
+
         # Initialize Telegram command bridge
         self.telegram_bridge = TelegramCommandBridge(
-            self.telegram_notifier, self.user_input_handler, self.db, self.settings
+            self.telegram_notifier, self.user_input_handler, self.db,
+            self.settings
         )
-        
+
         # Register callbacks with both user input handler and telegram bridge
         callbacks = {
             'insulin_logged': self._on_insulin_logged,
@@ -61,21 +64,22 @@ class GlucoseMonitor:
             'quit_requested': self._on_quit_requested,
             'get_next_reading_time': self._get_next_reading_time
         }
-        
+
         for event, callback in callbacks.items():
             self.user_input_handler.register_callback(event, callback)
             # Also register with telegram bridge's command processor
             if hasattr(self.telegram_bridge, 'command_processor'):
-                self.telegram_bridge.command_processor.register_callback(event, callback)
-        
+                self.telegram_bridge.command_processor.register_callback(
+                    event, callback)
+
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-        
+
         # Performance tracking
         self.last_cleanup_time = datetime.now()
         self.readings_processed = 0
-        
+
         logger.info("Glucose monitor initialized successfully")
     
     def run(self):
@@ -122,12 +126,13 @@ class GlucoseMonitor:
             return
         
         # Store reading in database
-        reading_id = self.db.insert_reading(reading)
+        self.db.insert_reading(reading)
         self.readings_processed += 1
         self.last_processed_reading = reading
         
         # Get recent readings for analysis
-        recent_readings = self.db.get_latest_readings(self.settings.analysis_window_size)
+        recent_readings = self.db.get_latest_readings(
+            self.settings.analysis_window_size)
         
         if len(recent_readings) < 2:
             logger.info("Not enough readings for analysis yet")
@@ -135,13 +140,16 @@ class GlucoseMonitor:
         
         # Perform trend analysis
         trend_analysis = self.trend_analyzer.analyze_trend(recent_readings)
-        logger.info(f"Trend analysis: {trend_analysis['trend']} "
-                   f"({trend_analysis['rate_of_change']:.1f} mg/dL/min)")
+        logger.info(
+            f"Trend analysis: {trend_analysis['trend']} "
+            f"({trend_analysis['rate_of_change']:.1f} mg/dL/min)")
         
         # Detect patterns
         patterns = self.trend_analyzer.detect_patterns(recent_readings)
         if patterns['patterns']:
-            logger.info(f"Detected patterns: {[p['type'] for p in patterns['patterns']]}")
+            logger.info(
+                f"Detected patterns: "
+                f"{[p['type'] for p in patterns['patterns']]}")
         
         # Make prediction
         prediction = self.predictor.predict_future_value(recent_readings)
@@ -162,11 +170,13 @@ class GlucoseMonitor:
         iob_cob_data = None
         if active_insulin or active_carbs or iob_override_value is not None:
             iob_cob_data = self.iob_calculator.get_iob_cob_summary(
-                current_time, active_insulin, active_carbs, reading.value, iob_override_value
+                current_time, active_insulin, active_carbs, reading.value,
+                iob_override_value if iob_override_value is not None else 0.0
             )
             
             iob_source = ""
-            if iob_cob_data['iob'].get('is_override'):
+            if (iob_cob_data['iob'].get('is_override') and
+                    iob_override_entry is not None):
                 iob_source = f" (from {iob_override_entry.source})"
             
             logger.info(f"IOB: {iob_cob_data['iob']['total_iob']:.1f}u{iob_source}, "
@@ -210,7 +220,10 @@ class GlucoseMonitor:
         
         # Terminal output if enabled
         if self.settings.enable_terminal_output:
-            self._display_terminal_output(reading, trend_analysis, prediction, recommendations, iob_cob_data)
+            self._display_terminal_output(
+                reading, trend_analysis, prediction, recommendations,
+                iob_cob_data
+            )
         
         # Periodic cleanup
         self._periodic_cleanup()
@@ -272,9 +285,10 @@ class GlucoseMonitor:
         logger.info("All connection tests passed")
         return True
     
-    def _display_terminal_output(self, reading: GlucoseReading, 
-                               trend_analysis: dict, prediction: dict, 
-                               recommendations: list, iob_cob_data: dict = None):
+    def _display_terminal_output(
+            self, reading: GlucoseReading,
+            trend_analysis: dict, prediction: dict,
+            recommendations: list, iob_cob_data: Optional[dict] = None):
         """Display current status in terminal"""
         print("\n" + "="*60)
         print(f"GLUCOSE MONITOR - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -289,7 +303,7 @@ class GlucoseMonitor:
         
         # IOB/COB information
         if iob_cob_data:
-            print(f"\nActive Factors:")
+            print("\nActive Factors:")
             iob = iob_cob_data['iob']['total_iob']
             cob = iob_cob_data['cob']['total_cob']
             if iob > 0.1:
@@ -359,22 +373,27 @@ class GlucoseMonitor:
         # Wait before retrying
         time.sleep(30)
     
-    def _signal_handler(self, signum, frame):
+    def _signal_handler(self, signum, _frame):
         """Handle shutdown signals"""
         logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.running = False
     
     def _on_insulin_logged(self, entry):
         """Callback when insulin is logged"""
-        logger.info(f"Insulin logged via terminal: {entry.units}u {entry.insulin_type}")
+        logger.info(
+            f"Insulin logged via terminal: "
+            f"{entry.units}u {entry.insulin_type}")
     
     def _on_carbs_logged(self, entry):
         """Callback when carbs are logged"""
-        logger.info(f"Carbs logged via terminal: {entry.grams}g {entry.carb_type}")
+        logger.info(
+            f"Carbs logged via terminal: {entry.grams}g {entry.carb_type}")
     
     def _on_iob_override_set(self, entry):
         """Callback when IOB override is set"""
-        logger.info(f"IOB override set via terminal: {entry.iob_value:.1f}u from {entry.source}")
+        logger.info(
+            f"IOB override set via terminal: "
+            f"{entry.iob_value:.1f}u from {entry.source}")
         
         # Generate current status with updated recommendations
         current_status = self._generate_current_status_with_recommendations()
@@ -383,7 +402,8 @@ class GlucoseMonitor:
         return current_status
     
     def _generate_current_status_with_recommendations(self):
-        """Generate current glucose status with updated recommendations after IOB change"""
+        """Generate current glucose status with updated recommendations
+        after IOB change"""
         try:
             # Get most recent glucose reading
             recent_readings = self.db.get_latest_readings(10)
@@ -401,7 +421,7 @@ class GlucoseMonitor:
             trend_analysis = self.trend_analyzer.analyze_trend(recent_readings)
             
             # Generate prediction
-            prediction = self.predictor.predict_glucose(recent_readings, 15)
+            prediction = self.predictor.predict_future_value(recent_readings)
             
             # Get IOB/COB data (this will now include the new IOB override)
             active_insulin = self.db.get_active_insulin(current_time)
@@ -409,18 +429,24 @@ class GlucoseMonitor:
             
             # Check for IOB override
             iob_override_entry = self.db.get_latest_iob_override(current_time)
-            iob_override_value = iob_override_entry.iob_value if iob_override_entry else None
+            iob_override_value = (
+                iob_override_entry.iob_value if iob_override_entry
+                else None)
             
             iob_cob_data = None
             if active_insulin or active_carbs or iob_override_value is not None:
                 iob_cob_data = self.iob_calculator.get_iob_cob_summary(
-                    current_time, active_insulin, active_carbs, current_reading.value, iob_override_value
+                    current_time, active_insulin, active_carbs,
+                    current_reading.value,
+                    iob_override_value if iob_override_value is not None
+                    else 0.0
                 )
             
             # Generate recommendations with new IOB context
-            recommendations = self.recommendation_engine.get_recommendations(
-                recent_readings, trend_analysis, prediction, iob_cob_data
-            )
+            recommendations = (
+                self.recommendation_engine.get_recommendations(
+                    recent_readings, trend_analysis, prediction, iob_cob_data
+                ))
             
             # Return comprehensive status
             return {
@@ -436,7 +462,9 @@ class GlucoseMonitor:
                     'prediction': prediction,
                     'iob_cob': iob_cob_data,
                     'recommendations': recommendations,
-                    'iob_source': iob_override_entry.source if iob_override_entry else None
+                    'iob_source': (
+                        iob_override_entry.source if iob_override_entry
+                        else None)
                 }
             }
             
@@ -455,13 +483,13 @@ class GlucoseMonitor:
             return {
                 'wait_seconds': wait_seconds,
                 'last_reading_time': self.sensor_client.last_reading_time,
-                'next_expected_time': self.sensor_client.next_expected_reading_time
+                'next_expected_time': (
+                    self.sensor_client.next_expected_reading_time)
             }
         except Exception as e:
             logger.error(f"Error getting next reading time: {e}")
             return None
-    
-    
+
     def _on_quit_requested(self):
         """Callback when user requests quit"""
         logger.info("Quit requested via terminal")
@@ -478,7 +506,8 @@ class GlucoseMonitor:
         # Send shutdown notification
         self.telegram_notifier.send_alert(
             "shutdown",
-            f"Glucose monitoring system stopped. Processed {self.readings_processed} readings.",
+            f"Glucose monitoring system stopped. "
+            f"Processed {self.readings_processed} readings.",
             urgency='low'
         )
         
@@ -488,8 +517,9 @@ class GlucoseMonitor:
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description='Glucose Monitoring System')
-    parser.add_argument('--mock', action='store_true', 
-                       help='Use mock Dexcom client for testing')
+    parser.add_argument(
+        '--mock', action='store_true',
+        help='Use mock Dexcom client for testing')
     parser.add_argument('--env-file', default='.env',
                        help='Environment file path')
     parser.add_argument('--log-level', default='INFO',
@@ -517,6 +547,7 @@ def main():
     except Exception as e:
         logger.error(f"Failed to start glucose monitor: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
