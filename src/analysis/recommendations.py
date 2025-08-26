@@ -49,17 +49,35 @@ class InsulinRecommendation(RecommendationBase):
         current_reading = readings[0]  # Most recent
         current_value = current_reading.value
         
-        # Check IOB - don't recommend if high IOB
+        # Check IOB - don't recommend if high IOB unless glucose rising fast with COB
         current_iob = 0.0
-        if iob_cob_data and iob_cob_data.get('iob', {}).get('total_iob', 0) > 0:
-            current_iob = iob_cob_data['iob']['total_iob']
+        current_cob = 0.0
+        if iob_cob_data:
+            current_iob = iob_cob_data.get('iob', {}).get('total_iob', 0)
+            current_cob = iob_cob_data.get('cob', {}).get('total_cob', 0)
             
-            # High IOB threshold check
+            # High IOB threshold check, but with exception for fast-rising glucose + COB
             if current_iob > self.settings.iob_threshold_high:
-                return None  # Too much active insulin already
+                # Exception: Allow small insulin if glucose rising fast despite IOB+COB
+                is_fast_rising = trend_analysis.get('trend') in ['fast_up', 'very_fast_up']
+                rate_of_change = trend_analysis.get('rate_of_change', 0)
+                
+                if (is_fast_rising and rate_of_change > 1.5 and 
+                    current_cob > 5.0 and current_value > self.settings.high_glucose_threshold):
+                    # Allow small correction - insufficient insulin for carbs scenario
+                    pass  # Continue with modified calculation
+                else:
+                    return None  # Too much active insulin already
         
         # Don't recommend insulin if glucose is not elevated or trending down rapidly
-        if current_value < self.settings.high_glucose_threshold:
+        # Exception: allow for fast-rising glucose with insufficient insulin for carbs
+        is_fast_rising_with_cob = (
+            trend_analysis.get('trend') in ['fast_up', 'very_fast_up'] and
+            trend_analysis.get('rate_of_change', 0) > 1.5 and
+            current_cob > 5.0 and current_iob > 1.0 and current_value > 160
+        )
+        
+        if current_value < self.settings.high_glucose_threshold and not is_fast_rising_with_cob:
             return None
         
         # Block insulin for rapidly falling glucose
@@ -76,7 +94,12 @@ class InsulinRecommendation(RecommendationBase):
                 return None
         
         # Check if values have been stable and elevated for several readings
-        if not self._is_stable_elevated_pattern(readings):
+        # Exception: allow insufficient insulin for carbs scenario
+        is_insufficient_insulin_scenario = self._is_insufficient_insulin_pattern(
+            readings, trend_analysis, current_iob, current_cob
+        )
+        
+        if not self._is_stable_elevated_pattern(readings) and not is_insufficient_insulin_scenario:
             return None
         
         # Calculate recommended insulin units using target glucose
@@ -87,10 +110,23 @@ class InsulinRecommendation(RecommendationBase):
         iob_adjustment = current_iob * self.settings.insulin_effectiveness
         adjusted_excess = excess_glucose - iob_adjustment
         
+        # Special handling for insufficient insulin scenario
         if adjusted_excess <= 0:
-            return None  # IOB should handle current glucose level
-        
-        insulin_units = (adjusted_excess / self.settings.insulin_effectiveness) * self.settings.insulin_unit_ratio
+            # Check if glucose is rising fast despite IOB - insufficient insulin for carbs
+            is_fast_rising = trend_analysis.get('trend') in ['fast_up', 'very_fast_up']
+            rate_of_change = trend_analysis.get('rate_of_change', 0)
+            
+            if (is_fast_rising and rate_of_change > 1.5 and current_cob > 5.0 and
+                current_iob > 1.0 and current_value > self.settings.high_glucose_threshold):
+                # Insufficient insulin for carbs - recommend small additional dose
+                # Calculate based on rate of rise and remaining carbs
+                carb_effect = current_cob * 3.5  # Approximate carb effect
+                additional_insulin_needed = carb_effect * 0.15  # Conservative ratio
+                insulin_units = min(additional_insulin_needed, 1.0)  # Cap at 1 unit
+            else:
+                return None  # IOB should handle current glucose level
+        else:
+            insulin_units = (adjusted_excess / self.settings.insulin_effectiveness) * self.settings.insulin_unit_ratio
         
         # For slow correction scenarios, reduce dose by 50% since glucose is already falling
         if trend_analysis.get('trend') == 'down':
@@ -99,12 +135,29 @@ class InsulinRecommendation(RecommendationBase):
         # Safety limits
         insulin_units = max(0.1, min(2.0, insulin_units))  # Between 0.1 and 2.0 units
         
-        message = self._generate_insulin_message(current_value, insulin_units, trend_analysis, current_iob)
+        message = self._generate_insulin_message(current_value, insulin_units, trend_analysis, current_iob, current_cob)
         
-        # Determine safety notes based on scenario
+        # Determine safety notes and priority based on scenario
         is_slow_correction = trend_analysis.get('trend') == 'down'
+        is_insufficient_insulin = (
+            current_iob > 1.0 and current_cob > 5.0 and 
+            trend_analysis.get('trend') in ['fast_up', 'very_fast_up'] and
+            trend_analysis.get('rate_of_change', 0) > 1.5
+        )
         
-        if is_slow_correction:
+        # Adjust priority for insufficient insulin scenario
+        priority = self.get_priority()
+        if is_insufficient_insulin:
+            priority = 3  # Lower priority - supplemental dose
+        
+        if is_insufficient_insulin:
+            safety_notes = [
+                "This is not professional advice - use your own judgment",
+                "SUPPLEMENTAL DOSE: Small additional insulin for carb coverage",
+                "Monitor glucose every 30 minutes - carbs may still be absorbing",
+                "Watch for delayed effect of existing IOB + new insulin"
+            ]
+        elif is_slow_correction:
             safety_notes = [
                 "This is not professional advice - use your own judgment",
                 "SLOW CORRECTION: Monitor glucose every 30-60 minutes after insulin",
@@ -120,7 +173,7 @@ class InsulinRecommendation(RecommendationBase):
         
         return {
             'type': 'insulin',
-            'priority': self.get_priority(),
+            'priority': priority,
             'message': message,
             'parameters': {
                 'recommended_units': round(insulin_units, 1),
@@ -204,25 +257,69 @@ class InsulinRecommendation(RecommendationBase):
             
         return True
     
+    def _is_insufficient_insulin_pattern(self, readings: List[GlucoseReading],
+                                        trend_analysis: Dict, current_iob: float,
+                                        current_cob: float) -> bool:
+        """Check if this is an insufficient insulin for carbs scenario"""
+        if len(readings) < 4:
+            return False
+        
+        current_value = readings[0].value
+        
+        # Must have significant IOB and COB
+        if current_iob < 1.0 or current_cob < 5.0:
+            return False
+        
+        # Must be rising fast
+        if (trend_analysis.get('trend') not in ['fast_up', 'very_fast_up'] or
+            trend_analysis.get('rate_of_change', 0) <= 1.5):
+            return False
+        
+        # Must be above a reasonable threshold (lower than normal high)
+        if current_value <= 160:
+            return False
+        
+        # Check that glucose is consistently rising (not just a spike)
+        recent_values = [r.value for r in readings[:4]]
+        
+        # Should show upward trend over recent readings
+        # readings[0] is most recent, readings[3] is oldest of the 4
+        if recent_values[0] <= recent_values[-1]:
+            return False  # Not consistently rising
+        
+        return True
+    
     def _generate_insulin_message(self, current_value: float, 
                                  insulin_units: float, trend_analysis: Dict,
-                                 current_iob: float = 0.0) -> str:
+                                 current_iob: float = 0.0, current_cob: float = 0.0) -> str:
         trend = trend_analysis.get('trend', 'no_change')
         rate_of_change = trend_analysis.get('rate_of_change', 0)
         
-        base_msg = f"Consider {insulin_units:.1f} units of insulin. "
-        base_msg += f"Current glucose: {current_value:.0f} mg/dL"
+        # Check if this is insufficient insulin for carbs scenario
+        is_insufficient_insulin = (
+            current_iob > 1.0 and current_cob > 5.0 and 
+            trend in ['fast_up', 'very_fast_up'] and rate_of_change > 1.5
+        )
         
-        if trend == 'up' or trend == 'fast_up':
-            base_msg += " (rising)"
-        elif trend == 'no_change':
-            base_msg += " (stable)"
-        elif trend == 'down':
-            # Special message for slow correction scenario
-            base_msg += f" (slowly falling at {abs(rate_of_change):.1f} mg/dL/min - safe to accelerate correction)"
-        
-        if current_iob > 0.1:
-            base_msg += f", IOB: {current_iob:.1f}u"
+        if is_insufficient_insulin:
+            base_msg = f"Consider {insulin_units:.1f} units additional insulin. "
+            base_msg += f"Current glucose: {current_value:.0f} mg/dL (rising fast despite IOB)"
+            base_msg += f", IOB: {current_iob:.1f}u, COB: {current_cob:.1f}g"
+            base_msg += " - carbs may be overwhelming current insulin"
+        else:
+            base_msg = f"Consider {insulin_units:.1f} units of insulin. "
+            base_msg += f"Current glucose: {current_value:.0f} mg/dL"
+            
+            if trend == 'up' or trend == 'fast_up':
+                base_msg += " (rising)"
+            elif trend == 'no_change':
+                base_msg += " (stable)"
+            elif trend == 'down':
+                # Special message for slow correction scenario
+                base_msg += f" (slowly falling at {abs(rate_of_change):.1f} mg/dL/min - safe to accelerate correction)"
+            
+            if current_iob > 0.1:
+                base_msg += f", IOB: {current_iob:.1f}u"
         
         return base_msg
 
@@ -351,6 +448,15 @@ class MonitoringRecommendation(RecommendationBase):
             monitoring_reasons.append("rapid glucose changes detected")
             frequency_minutes = 15
         
+        # IOB/COB balance scenarios - insulin working against carbs
+        if iob_cob_data:
+            current_iob = iob_cob_data.get('iob', {}).get('total_iob', 0.0)
+            current_cob = iob_cob_data.get('cob', {}).get('total_cob', 0.0)
+            
+            if current_iob > 1.0 and current_cob > 10.0:
+                monitoring_reasons.append(f"insulin ({current_iob:.1f}u) working against carbs ({current_cob:.1f}g)")
+                frequency_minutes = 30
+        
         # Approaching thresholds
         if (self.settings.low_glucose_threshold * 1.1 >= current_value >= 
             self.settings.low_glucose_threshold * 0.9):
@@ -463,15 +569,26 @@ class IOBStatusRecommendation(RecommendationBase):
                 urgency = 'medium'
                 reasons.append("glucose rising fast with low IOB - confirm no recent insulin")
             elif current_iob > 0.6:  # High IOB
-                recommend_iob_check = True
-                urgency = 'medium'
-                reasons.append(f"high IOB ({current_iob:.1f}u) significantly affecting predictions")
-                
-                # If high IOB and glucose isn't dropping as expected
+                # If high IOB and glucose isn't dropping as expected, consider COB first
                 if (current_iob > 1.0 and 
                     trend_analysis.get('trend') not in ['down', 'fast_down', 'very_fast_down']):
-                    urgency = 'high'
-                    reasons.append("high IOB but glucose not falling as expected")
+                    # Check if COB explains why glucose isn't falling
+                    current_cob = iob_cob_data.get('cob', {}).get('total_cob', 0.0) if iob_cob_data else 0.0
+                    
+                    if current_cob > 10.0:  # Significant carbs on board
+                        # With COB, stable glucose is expected - this is normal, just monitor
+                        recommend_iob_check = True
+                        urgency = 'low'
+                        reasons.append(f"insulin ({current_iob:.1f}u) and carbs ({current_cob:.1f}g) balancing - expect stability")
+                    else:
+                        recommend_iob_check = True
+                        urgency = 'high'
+                        reasons.append("high IOB but glucose not falling as expected")
+                else:
+                    # Standard high IOB case
+                    recommend_iob_check = True
+                    urgency = 'medium'
+                    reasons.append(f"high IOB ({current_iob:.1f}u) significantly affecting predictions")
         
             # Also check for potentially stale IOB override data
             elif has_iob_data and iob_cob_data['iob'].get('is_override') and current_iob > 0.2:
@@ -519,7 +636,7 @@ class IOBStatusRecommendation(RecommendationBase):
         msg += "Check pump/Omnipod for accurate reading."
         return msg
     
-    def _calculate_expected_glucose_effect(self, iob: float) -> Dict:
+    def _calculate_expected_glucose_effect(self, iob: float) -> Optional[Dict]:
         """Calculate expected glucose effect from IOB"""
         if iob <= 0:
             return None
