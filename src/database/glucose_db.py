@@ -40,6 +40,15 @@ class IOBOverride:
     notes: Optional[str] = None
     id: Optional[int] = None
 
+@dataclass
+class GlucoseNote:
+    timestamp: datetime
+    note_text: str
+    note_type: str = 'observation'  # 'observation', 'trend', 'recommendation-note'
+    glucose_value: Optional[float] = None
+    context_data: Optional[str] = None  # JSON string for additional context (IOB, COB, etc.)
+    id: Optional[int] = None
+
 class GlucoseDatabase:
     def __init__(self, db_path: str = "glucose_monitor.db"):
         self.db_path = db_path
@@ -108,6 +117,18 @@ class GlucoseDatabase:
             ''')
             
             cursor.execute('''
+                CREATE TABLE IF NOT EXISTS glucose_notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    note_text TEXT NOT NULL,
+                    note_type TEXT DEFAULT 'observation',
+                    glucose_value REAL,
+                    context_data TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_glucose_timestamp 
                 ON glucose_readings(timestamp)
             ''')
@@ -125,6 +146,11 @@ class GlucoseDatabase:
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_iob_override_timestamp 
                 ON iob_overrides(timestamp)
+            ''')
+            
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_glucose_notes_timestamp 
+                ON glucose_notes(timestamp)
             ''')
             
             conn.commit()
@@ -589,4 +615,59 @@ class GlucoseDatabase:
                     notes=row[4]
                 )
             
-            return None
+            return None    
+    def insert_glucose_note(self, note: GlucoseNote) -> int:
+        """Insert glucose note into database"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO glucose_notes 
+                (timestamp, note_text, note_type, glucose_value, context_data)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                note.timestamp.isoformat(),
+                note.note_text,
+                note.note_type,
+                note.glucose_value,
+                note.context_data
+            ))
+            conn.commit()
+            note_id = cursor.lastrowid
+            logger.info(f"Inserted glucose note: {note.note_type} - {note.note_text[:50]}...")
+            return note_id or 0
+    
+    def get_recent_notes(self, hours: int = 24, note_type: Optional[str] = None) -> List[GlucoseNote]:
+        """Get recent glucose notes"""
+        since_time = datetime.now() - timedelta(hours=hours)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            if note_type:
+                cursor.execute("""
+                    SELECT id, timestamp, note_text, note_type, glucose_value, context_data
+                    FROM glucose_notes
+                    WHERE timestamp >= ? AND note_type = ?
+                    ORDER BY timestamp DESC
+                """, (since_time.isoformat(), note_type))
+            else:
+                cursor.execute("""
+                    SELECT id, timestamp, note_text, note_type, glucose_value, context_data
+                    FROM glucose_notes
+                    WHERE timestamp >= ?
+                    ORDER BY timestamp DESC
+                """, (since_time.isoformat(),))
+            
+            notes = []
+            for row in cursor.fetchall():
+                note = GlucoseNote(
+                    id=row[0],
+                    timestamp=datetime.fromisoformat(row[1]),
+                    note_text=row[2],
+                    note_type=row[3],
+                    glucose_value=row[4],
+                    context_data=row[5]
+                )
+                notes.append(note)
+            
+            return notes

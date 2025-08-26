@@ -697,6 +697,9 @@ class TelegramCommandBridge:
             # Sensor reading command
             'reading': self._handle_reading,
             'r': self._handle_reading,
+            # Note commands
+            'note': self._handle_note,
+            'notes': self._handle_notes,
         }
         
         for command, handler in commands.items():
@@ -850,6 +853,49 @@ class TelegramCommandBridge:
         except Exception as e:
             return f"Error running system tests: {e}"
     
+    def _handle_note(self, args: List[str], message: Dict) -> str:
+        """Handle note command - add observation note"""
+        if not args:
+            return ("Add a glucose observation note\n"
+                   "Usage: /note <text> [type]\n"
+                   "Example: /note Rate is slowing trend\n"
+                   "Types: observation (default), trend, recommendation-note")
+        
+        try:
+            # Extract note text and optional type
+            if len(args) > 1 and args[-1] in ['observation', 'trend', 'recommendation-note']:
+                note_type = args[-1]
+                note_text = ' '.join(args[:-1])
+            else:
+                note_type = 'observation'
+                note_text = ' '.join(args)
+            
+            result = self.command_processor.execute_note(note_text, note_type)
+            return self.formatter.format_note_result(result)
+            
+        except Exception as e:
+            return f"Error adding note: {e}"
+    
+    def _handle_notes(self, args: List[str], message: Dict) -> str:
+        """Handle notes command - show recent notes"""
+        try:
+            hours = 24
+            note_type = None
+            
+            # Parse arguments
+            if args:
+                if args[0].isdigit():
+                    hours = int(args[0])
+                    note_type = args[1] if len(args) > 1 else None
+                else:
+                    note_type = args[0] if args[0] in ['observation', 'trend', 'recommendation-note'] else None
+                    
+            result = self.command_processor.execute_notes(hours, note_type)
+            return self.formatter.format_notes_result(result)
+            
+        except Exception as e:
+            return f"Error retrieving notes: {e}"
+
     def _handle_ping(self, args: List[str], message: Dict) -> str:
         """Handle ping command - simple connectivity test"""
         return self.formatter.format_ping()

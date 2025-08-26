@@ -469,3 +469,61 @@ class TelegramFormatter:
             return '[MEDIUM]'
         else:
             return '[INFO]'
+    
+    def format_note_result(self, result: Dict) -> str:
+        """Format note addition result"""
+        if not result['success']:
+            return f"❌ {result.get('error', 'Unknown error adding note')}"
+        
+        data = result['data']
+        note_icon = {'observation': '📝', 'trend': '📈', 'recommendation-note': '💡'}.get(data['note_type'], '📝')
+        
+        output = [f"{note_icon} *Note Added*"]
+        output.append(f"Text: {data['note_text']}")
+        output.append(f"Type: {data['note_type'].title()}")
+        
+        if data.get('glucose_value'):
+            output.append(f"Glucose: {data['glucose_value']:.0f} mg/dL")
+        
+        output.append(f"Time: {data['timestamp'].strftime('%H:%M:%S')}")
+        
+        return "\n".join(output)
+    
+    def format_notes_result(self, result: Dict) -> str:
+        """Format notes list result"""
+        if not result['success']:
+            return f"❌ {result.get('error', 'Unknown error retrieving notes')}"
+        
+        data = result['data']
+        notes = data['notes']
+        
+        if not notes:
+            filter_text = f" ({data['note_type']})" if data.get('note_type') else ""
+            return f"📝 No notes found from last {data['hours']} hours{filter_text}"
+        
+        output = [f"📝 *Recent Notes* (last {data['hours']}h)"]
+        output.append("")
+        
+        for note in notes:
+            note_icon = {'observation': '📝', 'trend': '📈', 'recommendation-note': '💡'}.get(note['note_type'], '📝')
+            
+            # Format time
+            if note['minutes_ago'] < 1:
+                time_str = "Just now"
+            elif note['minutes_ago'] == 1:
+                time_str = "1 min ago"
+            elif note['minutes_ago'] < 60:
+                time_str = f"{note['minutes_ago']} mins ago"
+            else:
+                hours = note['minutes_ago'] // 60
+                time_str = f"{hours}h ago"
+            
+            glucose_text = f" ({note['glucose_value']:.0f} mg/dL)" if note.get('glucose_value') else ""
+            output.append(f"{note_icon} {note['note_text']}{glucose_text}")
+            output.append(f"   {time_str} • {note['note_type']}")
+            output.append("")
+        
+        if len(notes) < data['total_notes']:
+            output.append(f"... and {data['total_notes'] - len(notes)} more")
+        
+        return "\n".join(output)

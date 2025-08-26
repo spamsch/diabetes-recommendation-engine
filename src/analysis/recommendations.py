@@ -120,9 +120,9 @@ class InsulinRecommendation(RecommendationBase):
                 current_iob > 1.0 and current_value > self.settings.high_glucose_threshold):
                 # Insufficient insulin for carbs - recommend small additional dose
                 # Calculate based on rate of rise and remaining carbs
-                carb_effect = current_cob * 3.5  # Approximate carb effect
-                additional_insulin_needed = carb_effect * 0.15  # Conservative ratio
-                insulin_units = min(additional_insulin_needed, 1.0)  # Cap at 1 unit
+                carb_effect = current_cob * self.settings.carb_to_glucose_ratio
+                additional_insulin_needed = carb_effect * 0.075  # Conservative ratio (reduced from 0.15)
+                insulin_units = min(additional_insulin_needed, 0.5)  # Cap at 0.5 unit (reduced from 1.0)
             else:
                 return None  # IOB should handle current glucose level
         else:
@@ -648,6 +648,159 @@ class IOBStatusRecommendation(RecommendationBase):
             'note': f'{iob:.1f}u IOB should lower glucose by ~{expected_drop:.0f} mg/dL'
         }
 
+class TrendObservationRecommendation(RecommendationBase):
+    """Recommendation to add trend observation notes"""
+    
+    def get_priority(self) -> int:
+        return 6  # Lower priority - informational
+    
+    def analyze(self, readings: List[GlucoseReading], 
+                trend_analysis: Dict, prediction: Dict,
+                iob_cob_data: Optional[Dict] = None) -> Optional[Dict]:
+        
+        if not readings or len(readings) < 4:
+            return None
+        
+        current_reading = readings[0]
+        current_value = current_reading.value
+        trend = trend_analysis.get('trend', 'no_change')
+        rate_of_change = trend_analysis.get('rate_of_change', 0)
+        
+        # Look for notable patterns that warrant a note
+        note_reasons = []
+        note_type = 'observation'
+        suggested_note = ""
+        
+        # Pattern 1: Rate is slowing down (like user's scenario)
+        if self._is_rate_slowing(readings, trend_analysis):
+            note_reasons.append("glucose rate of change is slowing")
+            suggested_note = "Rate is slowing"
+            note_type = 'trend'
+        
+        # Pattern 2: Unexpected stability despite IOB+COB
+        elif self._is_unexpectedly_stable(readings, trend_analysis, iob_cob_data):
+            note_reasons.append("glucose stable despite active insulin and carbs")
+            suggested_note = "Stable despite IOB/COB balance"
+            note_type = 'observation'
+        
+        # Pattern 3: Rapid change pattern
+        elif trend in ['fast_up', 'very_fast_up', 'fast_down', 'very_fast_down']:
+            if abs(rate_of_change) > 2.0:
+                note_reasons.append(f"rapid glucose change ({abs(rate_of_change):.1f} mg/dL/min)")
+                direction = "rising" if rate_of_change > 0 else "falling"
+                suggested_note = f"Rapid {direction} trend"
+                note_type = 'trend'
+        
+        # Pattern 4: Glucose plateau after trend
+        elif self._is_plateau_after_trend(readings):
+            note_reasons.append("glucose plateau after significant trend")
+            suggested_note = "Plateau after trend"
+            note_type = 'trend'
+        
+        if not note_reasons:
+            return None
+        
+        # Create context data
+        context_data = {
+            'glucose_values': [r.value for r in readings[:6]],
+            'trend': trend,
+            'rate_of_change': rate_of_change,
+            'timestamp': current_reading.timestamp.isoformat()
+        }
+        
+        if iob_cob_data:
+            context_data['iob'] = iob_cob_data.get('iob', {}).get('total_iob', 0)
+            context_data['cob'] = iob_cob_data.get('cob', {}).get('total_cob', 0)
+        
+        message = self._generate_note_message(suggested_note, note_reasons, current_value)
+        
+        return {
+            'type': 'trend_note',
+            'priority': self.get_priority(),
+            'message': message,
+            'parameters': {
+                'suggested_note': suggested_note,
+                'note_type': note_type,
+                'current_glucose': current_value,
+                'reasons': note_reasons,
+                'context_data': str(context_data)  # Convert to string for storage
+            },
+            'safety_notes': [
+                "Consider adding this observation to track patterns",
+                "Notes help identify trends and improve future predictions"
+            ]
+        }
+    
+    def _is_rate_slowing(self, readings: List[GlucoseReading], trend_analysis: Dict) -> bool:
+        """Check if the rate of change is slowing down"""
+        if len(readings) < 6:
+            return False
+        
+        # Calculate rates for recent vs older readings
+        recent_values = [r.value for r in readings[:3]]  # Most recent 3
+        older_values = [r.value for r in readings[3:6]]   # Next 3
+        
+        # Calculate approximate rates (simplified)
+        recent_rate = (recent_values[0] - recent_values[-1]) / 2  # Rate over ~10 min
+        older_rate = (older_values[0] - older_values[-1]) / 2    # Rate over previous ~10 min
+        
+        # Check if the magnitude of change is decreasing
+        recent_abs_rate = abs(recent_rate)
+        older_abs_rate = abs(older_rate)
+        
+        # Rate is slowing if recent rate is significantly less than older rate
+        return older_abs_rate > 1.0 and recent_abs_rate < older_abs_rate * 0.6
+    
+    def _is_unexpectedly_stable(self, readings: List[GlucoseReading], 
+                               trend_analysis: Dict, iob_cob_data: Optional[Dict]) -> bool:
+        """Check if glucose is stable despite having IOB and COB"""
+        if not iob_cob_data:
+            return False
+        
+        current_iob = iob_cob_data.get('iob', {}).get('total_iob', 0)
+        current_cob = iob_cob_data.get('cob', {}).get('total_cob', 0)
+        
+        # Need significant IOB and COB
+        if current_iob < 1.0 or current_cob < 10.0:
+            return False
+        
+        # Check if glucose is relatively stable
+        trend = trend_analysis.get('trend')
+        rate = abs(trend_analysis.get('rate_of_change', 0))
+        
+        return trend in ['no_change', 'slow_up', 'slow_down'] and rate < 1.0
+    
+    def _is_plateau_after_trend(self, readings: List[GlucoseReading]) -> bool:
+        """Check if there's a plateau after a significant trend"""
+        if len(readings) < 6:
+            return False
+        
+        recent_values = [r.value for r in readings[:3]]
+        older_values = [r.value for r in readings[3:6]]
+        
+        # Recent values should be relatively stable
+        recent_range = max(recent_values) - min(recent_values)
+        if recent_range > 15:  # Too much variation for a plateau
+            return False
+        
+        # Older values should show significant trend
+        older_range = max(older_values) - min(older_values)
+        if older_range < 20:  # Not enough trend before
+            return False
+        
+        return True
+    
+    def _generate_note_message(self, suggested_note: str, reasons: List[str], 
+                              current_value: float) -> str:
+        """Generate message for trend note recommendation"""
+        reasons_text = ", ".join(reasons)
+        
+        msg = f"Consider adding note: '{suggested_note}'. "
+        msg += f"Current glucose: {current_value:.0f} mg/dL. "
+        msg += f"Observation: {reasons_text}."
+        
+        return msg
+
 class RecommendationEngine:
     """Main recommendation engine that coordinates all recommendation types"""
     
@@ -657,7 +810,8 @@ class RecommendationEngine:
             CarbRecommendation(settings),
             InsulinRecommendation(settings),
             MonitoringRecommendation(settings),
-            IOBStatusRecommendation(settings)
+            IOBStatusRecommendation(settings),
+            TrendObservationRecommendation(settings)
         ]
     
     def get_recommendations(self, readings: List[GlucoseReading], 

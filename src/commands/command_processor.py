@@ -512,3 +512,140 @@ class CommandProcessor:
                 data={},
                 error=f"Error running tests: {e}"
             )
+    
+    def execute_note(self, note_text: str, note_type: str = 'observation', 
+                     glucose_value: Optional[float] = None) -> CommandResult:
+        """Execute note command to add a glucose observation note"""
+        try:
+            # Validate note text
+            if not note_text or len(note_text.strip()) == 0:
+                return CommandResult(
+                    success=False,
+                    data={},
+                    error="Note text cannot be empty"
+                )
+            
+            if len(note_text) > 500:
+                return CommandResult(
+                    success=False,
+                    data={},
+                    error="Note text too long (max 500 characters)"
+                )
+            
+            # Validate note type
+            valid_types = ['observation', 'trend', 'recommendation-note']
+            if note_type.lower() not in valid_types:
+                note_type = 'observation'
+            
+            # Get current glucose if not provided
+            if glucose_value is None:
+                recent_readings = self.db.get_latest_readings(1)
+                if recent_readings:
+                    glucose_value = recent_readings[0].value
+            
+            # Get context data for the note
+            context_data = None
+            current_time = datetime.now()
+            
+            # Get IOB/COB for context
+            active_insulin = self.db.get_active_insulin(current_time)
+            active_carbs = self.db.get_active_carbs(current_time)
+            iob_override_entry = self.db.get_latest_iob_override(current_time)
+            
+            if active_insulin or active_carbs or iob_override_entry:
+                from ..analysis import IOBCalculator
+                iob_calculator = IOBCalculator(self.settings)
+                
+                iob_override_value = iob_override_entry.iob_value if iob_override_entry else None
+                iob_cob_data = iob_calculator.get_iob_cob_summary(
+                    current_time, active_insulin, active_carbs, glucose_value or 0, iob_override_value
+                )
+                
+                context_data = str({
+                    'iob': iob_cob_data.get('iob', {}).get('total_iob', 0),
+                    'cob': iob_cob_data.get('cob', {}).get('total_cob', 0),
+                    'timestamp': current_time.isoformat()
+                })
+            
+            # Import and create note
+            from ..database import GlucoseNote
+            note = GlucoseNote(
+                timestamp=current_time,
+                note_text=note_text.strip(),
+                note_type=note_type.lower(),
+                glucose_value=glucose_value,
+                context_data=context_data
+            )
+            
+            note_id = self.db.insert_glucose_note(note)
+            
+            # Trigger callback if available
+            if 'note_added' in self.callbacks:
+                self.callbacks['note_added'](note)
+            
+            # Create response message
+            message = f"Added {note_type} note: '{note_text[:50]}{'...' if len(note_text) > 50 else ''}'"
+            if glucose_value:
+                message += f" (glucose: {glucose_value:.0f} mg/dL)"
+            
+            return CommandResult(
+                success=True,
+                data={
+                    'note_id': note_id,
+                    'note_text': note_text,
+                    'note_type': note_type,
+                    'glucose_value': glucose_value,
+                    'timestamp': current_time,
+                    'context_data': context_data
+                },
+                message=message
+            )
+            
+        except Exception as e:
+            logger.error(f"Error adding note: {e}")
+            return CommandResult(
+                success=False,
+                data={},
+                error=f"Error adding note: {e}"
+            )
+    
+    def execute_notes(self, hours: int = 24, note_type: Optional[str] = None) -> CommandResult:
+        """Execute notes command to show recent notes"""
+        try:
+            # Get recent notes
+            recent_notes = self.db.get_recent_notes(hours, note_type)
+            
+            # Format notes for display
+            formatted_notes = []
+            for note in recent_notes[:10]:  # Limit to 10 most recent
+                minutes_ago = int((datetime.now() - note.timestamp).total_seconds() / 60)
+                formatted_note = {
+                    'note_text': note.note_text,
+                    'note_type': note.note_type,
+                    'timestamp': note.timestamp,
+                    'minutes_ago': minutes_ago,
+                    'glucose_value': note.glucose_value
+                }
+                formatted_notes.append(formatted_note)
+            
+            filter_text = f" ({note_type})" if note_type else ""
+            message = f"Retrieved {len(formatted_notes)} notes{filter_text} from last {hours} hours"
+            
+            return CommandResult(
+                success=True,
+                data={
+                    'hours': hours,
+                    'note_type': note_type,
+                    'notes': formatted_notes,
+                    'total_notes': len(recent_notes)
+                },
+                message=message
+            )
+            
+        except Exception as e:
+            logger.error(f"Error getting notes: {e}")
+            return CommandResult(
+                success=False,
+                data={},
+                error=f"Error getting notes: {e}"
+            )
