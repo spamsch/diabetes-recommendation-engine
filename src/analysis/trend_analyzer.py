@@ -125,6 +125,10 @@ class TrendAnalyzer:
         if len(values) < 3:
             return "weak"
         
+        # Check if all values are the same (constant input)
+        if all(v == values[0] for v in values):
+            return "weak"  # No trend if all values are constant
+        
         # Calculate correlation with time sequence
         time_sequence = list(range(len(values)))
         try:
